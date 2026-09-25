@@ -42,6 +42,7 @@ import com.example.ui.students.StudentListScreen
 import com.example.ui.students.StudentBarcodesScreen
 import com.example.ui.attendance.FastAttendanceScreen
 import com.example.ui.start_lesson.StartLessonScreen
+import com.example.ui.groups.GroupsScreen
 import io.github.jan.supabase.auth.auth
 import io.github.jan.supabase.auth.status.SessionStatus
 
@@ -176,8 +177,8 @@ fun MainAppNavigation(
                     onNavigateToReports = {
                         navController.navigate(Screen.Reports.route)
                     },
-                    onNavigateToFastAttendance = { gradeId ->
-                        navController.navigate(Screen.FastAttendance.createRoute(gradeId))
+                    onNavigateToFastAttendance = { gradeId, groupId ->
+                        navController.navigate(Screen.FastAttendance.createRoute(gradeId, groupId))
                     },
                     onNavigateToBarcodes = {
                         navController.navigate(Screen.StudentBarcodes.route)
@@ -228,6 +229,11 @@ fun MainAppNavigation(
                         type = NavType.StringType
                         nullable = true
                         defaultValue = null
+                    },
+                    navArgument("groupId") {
+                        type = NavType.StringType
+                        nullable = true
+                        defaultValue = null
                     }
                 ),
                 enterTransition = {
@@ -244,8 +250,10 @@ fun MainAppNavigation(
                 }
             ) { backStackEntry ->
                 val gradeIdArg = backStackEntry.arguments?.getString("gradeId")
+                val groupIdArg = backStackEntry.arguments?.getString("groupId")
                 FastAttendanceScreen(
                     gradeIdArg = gradeIdArg,
+                    groupIdArg = groupIdArg,
                     onNavigateBack = { navController.popBackStack() }
                 )
             }
@@ -284,6 +292,19 @@ fun MainAppNavigation(
                             popUpTo(0) { inclusive = true }
                             launchSingleTop = true
                         }
+                    },
+                    onNavigateToGroups = {
+                        navController.navigate(Screen.Groups.route)
+                    }
+                )
+            }
+
+            // Groups Destination
+            composable(Screen.Groups.route) {
+                GroupsScreen(
+                    onNavigateBack = { navController.popBackStack() },
+                    onStartAttendance = { groupId ->
+                        navController.navigate(Screen.FastAttendance.createRoute(null, groupId))
                     }
                 )
             }

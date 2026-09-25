@@ -45,7 +45,8 @@ import java.util.UUID
 
 class SupabaseAttendanceRepository(
     private val attendanceDao: AttendanceDao? = try { DatabaseProvider.getDatabase().attendanceDao() } catch (_: Exception) { null },
-    private val outboxDao: OutboxDao? = try { DatabaseProvider.getDatabase().outboxDao() } catch (_: Exception) { null }
+    private val outboxDao: OutboxDao? = try { DatabaseProvider.getDatabase().outboxDao() } catch (_: Exception) { null },
+    private val studentDao: com.example.data.local.dao.StudentDao? = try { DatabaseProvider.getDatabase().studentDao() } catch (_: Exception) { null }
 ) : AttendanceRepository {
     private val client = SupabaseClientProvider.client
 
@@ -351,10 +352,13 @@ class SupabaseAttendanceRepository(
         val teacherId = SupabaseClientProvider.mockTeacherId ?: user?.id
             ?: return@withContext Result.failure(IllegalStateException("انتهت الجلسة، يرجى تسجيل الدخول أولاً."))
 
+        val studentGroupId = studentDao?.getStudentByIdSync(teacherId, studentId)?.groupId
+
         try {
             val upsertDto = UpsertAttendanceRequest(
                 teacherId = teacherId,
                 studentId = studentId,
+                groupId = studentGroupId,
                 date = date,
                 status = status.name,
                 note = note?.ifBlank { null }
@@ -377,6 +381,7 @@ class SupabaseAttendanceRepository(
                     attendanceId = "${studentId}_${date}",
                     studentId = studentId,
                     teacherId = teacherId,
+                    groupId = studentGroupId,
                     date = date,
                     status = status,
                     note = note
@@ -386,6 +391,7 @@ class SupabaseAttendanceRepository(
                 val upsertDto = UpsertAttendanceRequest(
                     teacherId = teacherId,
                     studentId = studentId,
+                    groupId = studentGroupId,
                     date = date,
                     status = status.name,
                     note = note?.ifBlank { null }

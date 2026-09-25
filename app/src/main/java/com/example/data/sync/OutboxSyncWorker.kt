@@ -5,6 +5,8 @@ import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import com.example.core.model.InsertStudentRequest
 import com.example.core.model.SoftDeleteStudentRequest
+import com.example.core.model.SupabaseGroupDayDto
+import com.example.core.model.SupabaseGroupDto
 import com.example.core.model.SupabaseRecitationDto
 import com.example.core.model.UpdateStudentRequest
 import com.example.core.model.UpsertAttendanceRequest
@@ -39,7 +41,7 @@ class OutboxSyncWorker(
 
         val teacherId = SupabaseClientProvider.mockTeacherId ?: user?.id
         if (teacherId == null) {
-            return Result.retry()
+            return Result.success()
         }
 
         val operations = try {
@@ -243,6 +245,39 @@ class OutboxSyncWorker(
                         val req = Json.decodeFromString<com.example.core.model.UpsertLessonPaymentRequest>(op.payload)
                         client.postgrest["lesson_payments"].upsert(req) {
                             onConflict = "student_id,year,month"
+                        }
+                    }
+                }
+            }
+            "GROUP" -> {
+                val dto = Json.decodeFromString<SupabaseGroupDto>(op.payload)
+                when (opType) {
+                    "INSERT", "UPDATE" -> {
+                        client.postgrest["groups"].upsert(dto)
+                    }
+                    "DELETE" -> {
+                        client.postgrest["groups"].delete {
+                            filter {
+                                eq("id", entityId)
+                                eq("teacher_id", op.teacherId ?: "")
+                            }
+                        }
+                    }
+                }
+            }
+            "GROUP_DAYS" -> {
+                val dtos = Json.decodeFromString<List<SupabaseGroupDayDto>>(op.payload)
+                when (opType) {
+                    "REPLACE" -> {
+                        // Delete all days for this group first, then insert the new list
+                        client.postgrest["group_days"].delete {
+                            filter {
+                                eq("group_id", entityId)
+                                eq("teacher_id", op.teacherId ?: "")
+                            }
+                        }
+                        if (dtos.isNotEmpty()) {
+                            client.postgrest["group_days"].upsert(dtos)
                         }
                     }
                 }

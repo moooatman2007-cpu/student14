@@ -1,21 +1,67 @@
-# Add project specific ProGuard rules here.
-# You can control the set of applied configuration files using the
-# proguardFiles setting in build.gradle.
-#
-# For more details, see
-#   http://developer.android.com/guide/developing/tools/proguard.html
+# ProGuard / R8 Rules for MIDAR Release Build Optimization
 
-# If your project uses WebView with JS, uncomment the following
-# and specify the fully qualified class name to the JavaScript interface
-# class:
-#-keepclassmembers class fqcn.of.javascript.interface.for.webview {
-#   public *;
-#}
+# Preserve source file names and line numbers for stacktraces
+-keepattributes SourceFile,LineNumberTable
+-renamesourcefileattribute SourceFile
 
-# Uncomment this to preserve the line number information for
-# debugging stack traces.
-#-keepattributes SourceFile,LineNumberTable
+# ------------------------------------------------------------------------------
+# 1. Kotlin Serialization Rules
+# ------------------------------------------------------------------------------
+-keepattributes *Annotation*,Signature,InnerClasses,EnclosingMethod
 
-# If you keep the line number information, uncomment this to
-# hide the original source file name.
-#-renamesourcefileattribute SourceFile
+-keepclassmembers class * {
+    @kotlinx.serialization.Serializable *;
+}
+
+-keepclassmembers class * {
+    public static final **Companion Companion;
+}
+
+-keepclassmembers class **$Companion {
+    public kotlinx.serialization.KSerializer serializer(...);
+}
+
+-keep @kotlinx.serialization.Serializable class com.example.core.model.** { *; }
+
+# ------------------------------------------------------------------------------
+# 2. Room Database Rules
+# ------------------------------------------------------------------------------
+-keep class * extends androidx.room.RoomDatabase
+-keep @androidx.room.Entity class * { *; }
+-keep @androidx.room.Dao interface * { *; }
+-keepclassmembers class * {
+    @androidx.room.TypeConverter *;
+}
+
+-keep class com.example.data.local.entity.** { *; }
+-keep interface com.example.data.local.dao.** { *; }
+-keep class com.example.data.local.AppDatabase { *; }
+
+# ------------------------------------------------------------------------------
+# 3. WorkManager Rules
+# ------------------------------------------------------------------------------
+-keep class * extends androidx.work.ListenableWorker {
+    public <init>(android.content.Context, androidx.work.WorkerParameters);
+}
+-keep class com.example.data.sync.OutboxSyncWorker { *; }
+
+# ------------------------------------------------------------------------------
+# 4. Supabase & Ktor Client Rules
+# ------------------------------------------------------------------------------
+-keep class io.github.jan.supabase.** { *; }
+-keep class io.ktor.** { *; }
+
+# Ktor optionally checks Java Desktop JVM Management APIs which are not present on Android Runtime
+-dontwarn java.lang.management.ManagementFactory
+-dontwarn java.lang.management.RuntimeMXBean
+
+# ------------------------------------------------------------------------------
+# 5. ML Kit Barcode Scanning & CameraX Rules
+# ------------------------------------------------------------------------------
+-keep class com.google.mlkit.vision.barcode.** { *; }
+-keep class com.google.android.gms.vision.** { *; }
+
+# ------------------------------------------------------------------------------
+# 6. PDF Generation
+# ------------------------------------------------------------------------------
+-keep class android.graphics.pdf.PdfDocument { *; }

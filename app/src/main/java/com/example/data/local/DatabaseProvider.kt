@@ -35,6 +35,14 @@ object DatabaseProvider {
         appContext = null
     }
 
+    suspend fun clearAllData() = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+        instance?.clearAllTables()
+    }
+
+    fun clearAllDataSync() {
+        instance?.clearAllTables()
+    }
+
     fun getDatabase(context: Context? = null): AppDatabase {
         if (context != null && appContext == null) {
             appContext = context.applicationContext
@@ -63,7 +71,8 @@ object DatabaseProvider {
             AppDatabase.MIGRATION_2_3,
             AppDatabase.MIGRATION_3_4,
             AppDatabase.MIGRATION_4_5,
-            AppDatabase.MIGRATION_5_6
+            AppDatabase.MIGRATION_5_6,
+            AppDatabase.MIGRATION_6_7
         ).build()
     }
 }

@@ -9,6 +9,10 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -27,6 +31,7 @@ import com.example.util.PhoneUtil
 fun StudentProfileInfoTab(
     student: Student,
     grade: Grade?,
+    group: com.example.core.model.Group? = null,
     formattedCreatedAt: String,
     monthNameAr: String,
     isPaymentPaid: Boolean,
@@ -37,6 +42,7 @@ fun StudentProfileInfoTab(
     globalHomeworks: List<Homework>,
     globalAttendanceSummary: AttendanceSummary,
     latestMonthlyPerformance: StudentMonthlyPerformance?,
+    availableGroups: List<com.example.core.model.Group>,
     onTogglePayment: () -> Unit,
     onNavigateToEdit: (String) -> Unit,
     onSelectTab: (StudentDetailTab) -> Unit,
@@ -44,6 +50,7 @@ fun StudentProfileInfoTab(
     onRecordRecitation: () -> Unit,
     onRecordHomework: () -> Unit,
     onRecordExam: () -> Unit,
+    onAssignGroup: (String?) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -103,7 +110,35 @@ fun StudentProfileInfoTab(
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
                         Text("الصف / المجموعة", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Text(grade?.name ?: "غير محدد", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold)
+                        var isExpanded by remember { mutableStateOf(false) }
+                        Box(modifier = Modifier.clickable { isExpanded = true }) {
+                            val displayInfo = if (group != null) "${grade?.name ?: ""} — ${group.name}" else (grade?.name ?: "غير محدد")
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(displayInfo, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold)
+                                Icon(imageVector = Icons.Default.ArrowDropDown, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                            }
+                            DropdownMenu(
+                                expanded = isExpanded,
+                                onDismissRequest = { isExpanded = false }
+                            ) {
+                                DropdownMenuItem(
+                                    text = { Text("بدون مجموعة") },
+                                    onClick = {
+                                        onAssignGroup(null)
+                                        isExpanded = false
+                                    }
+                                )
+                                availableGroups.forEach { g ->
+                                    DropdownMenuItem(
+                                        text = { Text(g.name) },
+                                        onClick = {
+                                            onAssignGroup(g.id)
+                                            isExpanded = false
+                                        }
+                                    )
+                                }
+                            }
+                        }
                     }
                     Column(modifier = Modifier.weight(1f)) {
                         Text("رقم ولي الأمر", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)

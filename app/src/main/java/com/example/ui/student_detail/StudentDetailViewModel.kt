@@ -56,6 +56,8 @@ data class StudentDetailUiState(
     val isLoading: Boolean = true,
     val student: Student? = null,
     val grade: Grade? = null,
+    val group: com.example.core.model.Group? = null,
+    val availableGroups: List<com.example.core.model.Group> = emptyList(),
     val formattedCreatedAt: String = "",
     val selectedTab: StudentDetailTab = StudentDetailTab.OVERVIEW,
     
@@ -221,6 +223,22 @@ class StudentDetailViewModel(
             val student = studentRepository.getStudentById(studentId)
             if (student != null) {
                 val grade = gradeRepository.getGradeById(student.gradeId)
+                val group = student.groupId?.let { groupId ->
+                    try {
+                        val teacherId = student.teacherId ?: ""
+                        RepositoryProvider.groupRepository.getGroupById(teacherId, groupId)
+                    } catch (_: Exception) {
+                        null
+                    }
+                }
+                
+                // Fetch available groups
+                val availableGroups = try {
+                    RepositoryProvider.groupRepository.observeGroupsByGrade(student.teacherId ?: "", student.gradeId).first()
+                } catch (_: Exception) {
+                    emptyList()
+                }
+
                 val dateFormat = SimpleDateFormat("d MMMM yyyy", Locale("ar"))
                 val formattedDate = dateFormat.format(Date(student.createdAt))
 
@@ -228,6 +246,8 @@ class StudentDetailViewModel(
                     it.copy(
                         student = student,
                         grade = grade,
+                        group = group,
+                        availableGroups = availableGroups,
                         formattedCreatedAt = formattedDate,
                         error = null
                     )
@@ -881,6 +901,24 @@ class StudentDetailViewModel(
                 val errorMsg = result.exceptionOrNull()?.message ?: "فشل حذف الطالب"
                 _events.emit(StudentDetailEvent.ShowMessage(errorMsg))
             }
+        }
+    }
+
+    fun assignGroup(groupId: String?) {
+        val studentId = _uiState.value.student?.studentId ?: return
+        val teacherId = _uiState.value.student?.teacherId ?: return
+        
+        viewModelScope.launch {
+            _uiState.update { it.copy(isSaving = true) }
+            val result = RepositoryProvider.groupRepository.assignStudentToGroup(teacherId, studentId, groupId)
+            if (result.isSuccess) {
+                // Refresh student
+                loadStudent(studentId)
+                _events.emit(StudentDetailEvent.ShowMessage("تم تحديث مجموعة الطالب"))
+            } else {
+                _events.emit(StudentDetailEvent.ShowMessage("فشل تحديث مجموعة الطالب"))
+            }
+            _uiState.update { it.copy(isSaving = false) }
         }
     }
 }

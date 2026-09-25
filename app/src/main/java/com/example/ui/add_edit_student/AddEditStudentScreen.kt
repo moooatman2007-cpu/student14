@@ -367,6 +367,93 @@ fun AddEditStudentScreen(
                     }
                 }
 
+                // Group Selection Dropdown
+                if (uiState.groups.isNotEmpty()) {
+                    item {
+                        var isGroupMenuExpanded by remember { mutableStateOf(false) }
+                        val selectedGroupName = uiState.groups.find { it.id == uiState.selectedGroupId }?.name ?: "بدون مجموعة"
+                        Column {
+                            Text(
+                                text = "المجموعة الدراسية (اختياري)",
+                                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Spacer(modifier = Modifier.height(Dimens.Spacing8))
+
+                            Box(modifier = Modifier.fillMaxWidth()) {
+                                Card(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(14.dp))
+                                        .border(
+                                            width = 1.dp,
+                                            color = MaterialTheme.colorScheme.outline.copy(alpha = 0.6f),
+                                            shape = RoundedCornerShape(14.dp)
+                                        )
+                                        .clickable { isGroupMenuExpanded = true }
+                                        .testTag("select_group_dropdown"),
+                                    shape = RoundedCornerShape(14.dp),
+                                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                                    elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+                                ) {
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(horizontal = Dimens.Spacing16, vertical = Dimens.Spacing16),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.SpaceBetween
+                                    ) {
+                                        Text(
+                                            text = selectedGroupName,
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            color = MaterialTheme.colorScheme.onSurface
+                                        )
+
+                                        Icon(
+                                            imageVector = Icons.Default.KeyboardArrowDown,
+                                            contentDescription = "اختر المجموعة",
+                                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                }
+
+                                DropdownMenu(
+                                    expanded = isGroupMenuExpanded,
+                                    onDismissRequest = { isGroupMenuExpanded = false },
+                                    modifier = Modifier.background(MaterialTheme.colorScheme.surface)
+                                ) {
+                                    DropdownMenuItem(
+                                        text = {
+                                            Text(
+                                                text = "بدون مجموعة",
+                                                style = MaterialTheme.typography.bodyMedium
+                                            )
+                                        },
+                                        onClick = {
+                                            viewModel.onGroupSelected(null)
+                                            isGroupMenuExpanded = false
+                                        }
+                                    )
+                                    uiState.groups.forEach { group ->
+                                        DropdownMenuItem(
+                                            text = {
+                                                Text(
+                                                    text = group.name,
+                                                    style = MaterialTheme.typography.bodyMedium
+                                                )
+                                            },
+                                            onClick = {
+                                                viewModel.onGroupSelected(group.id)
+                                                isGroupMenuExpanded = false
+                                            }
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
                 // Parent Phone Input
                 item {
                     Column {

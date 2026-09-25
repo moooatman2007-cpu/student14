@@ -49,7 +49,15 @@ class FakeHomeworkRepository : HomeworkRepository {
         status: HomeworkStatus,
         note: String?
     ): Result<Homework> {
-        val hw = Homework("hw_1", studentId, date, title, status, note, 0L, 0L)
+        val hw = Homework(
+            homeworkId = "hw_1",
+            studentId = studentId,
+            teacherId = "t_1",
+            date = date,
+            title = title,
+            status = status,
+            note = note
+        )
         return Result.success(hw)
     }
     override suspend fun updateHomework(homework: Homework): Result<Homework> = Result.success(homework)

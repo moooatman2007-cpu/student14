@@ -33,13 +33,23 @@ sealed class Screen(val route: String) {
     data object StudentDetail : Screen("student_detail/{studentId}") {
         fun createRoute(studentId: String): String = "student_detail/$studentId"
     }
-    data object FastAttendance : Screen("fast_attendance?gradeId={gradeId}") {
-        fun createRoute(gradeId: String? = null): String {
-            return if (gradeId != null) "fast_attendance?gradeId=$gradeId" else "fast_attendance"
+    data object FastAttendance : Screen("fast_attendance?gradeId={gradeId}&groupId={groupId}") {
+        fun createRoute(gradeId: String? = null, groupId: String? = null): String {
+            return when {
+                gradeId != null && groupId != null -> "fast_attendance?gradeId=$gradeId&groupId=$groupId"
+                gradeId != null -> "fast_attendance?gradeId=$gradeId"
+                groupId != null -> "fast_attendance?groupId=$groupId"
+                else -> "fast_attendance"
+            }
         }
     }
     data object StudentBarcodes : Screen("student_barcodes")
     data object StartLesson : Screen("start_lesson")
+    data object Groups : Screen("groups")
+    data object AddGroup : Screen("add_group")
+    data object EditGroup : Screen("edit_group/{groupId}") {
+        fun createRoute(groupId: String): String = "edit_group/$groupId"
+    }
 }
 
 enum class BottomNavTab(

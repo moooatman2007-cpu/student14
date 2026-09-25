@@ -23,6 +23,9 @@ data class AttendanceEntity(
     @ColumnInfo(name = "teacher_id")
     val teacherId: String,
 
+    @ColumnInfo(name = "group_id")
+    val groupId: String? = null,
+
     @ColumnInfo(name = "date")
     val date: String,
 

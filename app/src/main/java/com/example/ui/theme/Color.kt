@@ -2,38 +2,50 @@ package com.example.ui.theme
 
 import androidx.compose.ui.graphics.Color
 
-// Main Brand Colors (Purple/Indigo vibrant SaaS palette matching screenshots)
-val PrimaryIndigo = Color(0xFF5B50EC)
-val PrimaryIndigoDark = Color(0xFF818CF8)
-val PrimaryIndigoLight = Color(0xFFEEF0FD)
+// MIDAR Official Brand Colors
+val MidarBlue = Color(0xFF1E60FF)
+val MidarBlueDark = Color(0xFF0C46DE)
+val MidarBlueLight = Color(0xFFEFF5FF)
+val MidarNavy = Color(0xFF0B1B3D)
+val MidarNavyDark = Color(0xFF07132B)
+val MidarNavyCard = Color(0xFF0D1C3D)
+val MidarGreen = Color(0xFF00C48C)
+val MidarGreenLight = Color(0xFFE6F9F3)
+val MidarGreenDark = Color(0xFF00966B)
+val MidarCyan = Color(0xFF2BB7F5)
 
-// Dark Navy Card & Banner Background (Matching Screenshot 1, 6)
-val DarkNavyCard = Color(0xFF1E2638)
-val DarkNavyCardSurface = Color(0xFF161D2C)
+// Aliases for compatibility
+val PrimaryIndigo = MidarBlue
+val PrimaryIndigoDark = Color(0xFF4B82FF)
+val PrimaryIndigoLight = MidarBlueLight
+
+// Dark Navy Card & Banner Background
+val DarkNavyCard = MidarNavyCard
+val DarkNavyCardSurface = Color(0xFF08142C)
 
 // Accent Colors
-val ElectricBlue = Color(0xFF2563EB)
+val ElectricBlue = MidarBlue
 val ElectricBlueLight = Color(0xFFEFF6FF)
-val VioletPurple = Color(0xFF8B5CF6)
-val VioletPurpleLight = Color(0xFFF5F3FF)
+val VioletPurple = Color(0xFF6366F1)
+val VioletPurpleLight = Color(0xFFEEF2FF)
 
 // Quick Action Pastel Backgrounds & Icons
-val ActionAddBg = Color(0xFFEFF0FE)
-val ActionAddIcon = Color(0xFF5B50EC)
+val ActionAddBg = Color(0xFFEFF5FF)
+val ActionAddIcon = MidarBlue
 
 val ActionAttendanceBg = Color(0xFFFFF7ED)
 val ActionAttendanceIcon = Color(0xFFF97316)
 
-val ActionSearchBg = Color(0xFFE6FFFA)
-val ActionSearchIcon = Color(0xFF0D9488)
+val ActionSearchBg = Color(0xFFE6F9F3)
+val ActionSearchIcon = MidarGreen
 
 val ActionStudentsBg = Color(0xFFFDF2F8)
 val ActionStudentsIcon = Color(0xFFDB2777)
 
 // Status & WhatsApp Colors
-val EmeraldGreen = Color(0xFF10B981)
-val EmeraldGreenLight = Color(0xFFD1FAE5)
-val EmeraldGreenDark = Color(0xFF047857)
+val EmeraldGreen = MidarGreen
+val EmeraldGreenLight = MidarGreenLight
+val EmeraldGreenDark = MidarGreenDark
 val WhatsAppColor = Color(0xFF25D366)
 
 val AmberWarning = Color(0xFFF59E0B)
@@ -44,21 +56,21 @@ val DangerRed = Color(0xFFEF4444)
 val DangerRedLight = Color(0xFFFEE2E2)
 
 // General Surface Colors
-val BackgroundLight = Color(0xFFF8FAFC)
+val BackgroundLight = Color(0xFFF4F7FB)
 val SurfaceLight = Color(0xFFFFFFFF)
-val SurfaceVariantLight = Color(0xFFF1F5F9)
-val OnSurfaceLight = Color(0xFF0F172A)
+val SurfaceVariantLight = Color(0xFFEEF3F8)
+val OnSurfaceLight = Color(0xFF0B1B3D)
 val OnSurfaceVariantLight = Color(0xFF64748B)
 val OutlineLight = Color(0xFFE2E8F0)
 
-val BackgroundDark = Color(0xFF0B0F19)
-val SurfaceDark = Color(0xFF151D2E)
-val SurfaceVariantDark = Color(0xFF1E293B)
+val BackgroundDark = Color(0xFF071124)
+val SurfaceDark = Color(0xFF0D1C3D)
+val SurfaceVariantDark = Color(0xFF13264D)
 val OnSurfaceDark = Color(0xFFF8FAFC)
 val OnSurfaceVariantDark = Color(0xFF94A3B8)
-val OutlineDark = Color(0xFF334155)
+val OutlineDark = Color(0xFF1E335C)
 
-// Avatar Pastel Palettes for Arabic Letters (Matching Screenshot 5)
+// Avatar Pastel Palettes for Arabic Letters
 val AvatarTealBg = Color(0xFFCCFBF1)
 val AvatarTealText = Color(0xFF0F766E)
 
@@ -76,3 +88,4 @@ val AvatarPinkText = Color(0xFFBE185D)
 
 val AvatarPurpleBg = Color(0xFFEDE9FE)
 val AvatarPurpleText = Color(0xFF6D28D9)
+

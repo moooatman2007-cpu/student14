@@ -38,6 +38,9 @@ data class StudentEntity(
     @ColumnInfo(name = "teacher_id")
     val teacherId: String? = null,
 
+    @ColumnInfo(name = "group_id")
+    val groupId: String? = null,
+
     @ColumnInfo(name = "deleted_at")
     val deletedAt: String? = null,
 

@@ -10,6 +10,8 @@ import com.example.core.model.Student
 import com.example.BuildConfig
 import com.example.data.repository.AttendanceRepository
 import com.example.data.repository.GradeRepository
+import com.example.data.repository.GroupRepository
+import com.example.data.repository.TeacherRepository
 import com.example.data.repository.PaymentRepository
 import com.example.data.repository.RepositoryProvider
 import com.example.data.repository.StudentRepository
@@ -52,6 +54,8 @@ data class FastAttendanceSummary(
 data class FastAttendanceUiState(
     val searchQuery: String = "",
     val selectedGradeId: String? = null,
+    val selectedGroupId: String? = null,
+    val groupName: String? = null,
     val grades: List<Grade> = emptyList(),
     val allStudentsInScope: List<Student> = emptyList(),
     val filteredStudents: List<Student> = emptyList(),
@@ -74,7 +78,9 @@ class FastAttendanceViewModel(
     private val studentRepository: StudentRepository = RepositoryProvider.studentRepository,
     private val gradeRepository: GradeRepository = RepositoryProvider.gradeRepository,
     private val attendanceRepository: AttendanceRepository = RepositoryProvider.attendanceRepository,
-    private val paymentRepository: PaymentRepository = RepositoryProvider.paymentRepository
+    private val paymentRepository: PaymentRepository = RepositoryProvider.paymentRepository,
+    private val groupRepository: GroupRepository = RepositoryProvider.groupRepository,
+    private val teacherRepository: TeacherRepository = RepositoryProvider.teacherRepository
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(FastAttendanceUiState())
@@ -94,16 +100,35 @@ class FastAttendanceViewModel(
     fun setInitialGradeId(gradeId: String?) {
         if (!gradeId.isNullOrBlank()) {
             _uiState.update { it.copy(selectedGradeId = gradeId) }
+            val currentGroupId = _uiState.value.selectedGroupId
+            updateLookupMaps(allStudentsList, gradeId, currentGroupId)
             applyFilters()
         }
     }
 
-    private fun updateLookupMaps(activeStudents: List<Student>, selectedGradeId: String?) {
+    fun setInitialGroupId(groupId: String?) {
+        if (groupId.isNullOrBlank()) return
+        _uiState.update { it.copy(selectedGroupId = groupId) }
+        viewModelScope.launch {
+            val teacher = teacherRepository.fetchCurrentTeacher()
+            if (teacher != null) {
+                val group = groupRepository.getGroupById(teacher.id, groupId)
+                if (group != null) {
+                    _uiState.update { it.copy(groupName = group.name) }
+                }
+            }
+            val currentGradeId = _uiState.value.selectedGradeId
+            updateLookupMaps(allStudentsList, currentGradeId, groupId)
+            applyFilters()
+        }
+    }
+
+    private fun updateLookupMaps(activeStudents: List<Student>, selectedGradeId: String?, selectedGroupId: String?) {
         studentCodeMap = activeStudents.associateBy { it.studentCode.trim().lowercase() }
-        val scope = if (selectedGradeId != null) {
-            activeStudents.filter { it.gradeId == selectedGradeId }
-        } else {
-            activeStudents
+        val scope = when {
+            selectedGroupId != null -> activeStudents.filter { it.groupId == selectedGroupId }
+            selectedGradeId != null -> activeStudents.filter { it.gradeId == selectedGradeId }
+            else -> activeStudents
         }
         inScopeStudentIdsSet = scope.mapTo(HashSet()) { it.studentId }
     }
@@ -124,12 +149,13 @@ class FastAttendanceViewModel(
                 Pair(gradesList, activeStudents)
             }.collect { (gradesList, activeStudents) ->
                 val currentGradeId = _uiState.value.selectedGradeId
-                updateLookupMaps(activeStudents, currentGradeId)
+                val currentGroupId = _uiState.value.selectedGroupId
+                updateLookupMaps(activeStudents, currentGradeId, currentGroupId)
 
-                val scope = if (currentGradeId != null) {
-                    activeStudents.filter { it.gradeId == currentGradeId }
-                } else {
-                    activeStudents
+                val scope = when {
+                    currentGroupId != null -> activeStudents.filter { it.groupId == currentGroupId }
+                    currentGradeId != null -> activeStudents.filter { it.gradeId == currentGradeId }
+                    else -> activeStudents
                 }
 
                 val currentPayments = _uiState.value.paymentsMap
@@ -252,13 +278,14 @@ class FastAttendanceViewModel(
     }
 
     fun onGradeSelected(gradeId: String?) {
-        updateLookupMaps(allStudentsList, gradeId)
+        val currentGroupId = _uiState.value.selectedGroupId
+        updateLookupMaps(allStudentsList, gradeId, currentGroupId)
 
         _uiState.update { state ->
-            val scope = if (gradeId != null) {
-                allStudentsList.filter { it.gradeId == gradeId }
-            } else {
-                allStudentsList
+            val scope = when {
+                state.selectedGroupId != null -> allStudentsList.filter { it.groupId == state.selectedGroupId }
+                gradeId != null -> allStudentsList.filter { it.gradeId == gradeId }
+                else -> allStudentsList
             }
             val paid = scope.count { state.paymentsMap[it.studentId]?.isPaid == true }
             val unpaid = (scope.size - paid).coerceAtLeast(0)
@@ -308,8 +335,16 @@ class FastAttendanceViewModel(
             return
         }
 
-        // Grade isolation check
-        if (state.selectedGradeId != null && foundGlobalStudent.gradeId != state.selectedGradeId) {
+        // Group or Grade isolation check
+        if (state.selectedGroupId != null && foundGlobalStudent.groupId != state.selectedGroupId) {
+            updateScanFeedback(ScanFeedback(
+                student = foundGlobalStudent,
+                type = ScanResultType.WRONG_GROUP,
+                rawCode = code
+            ))
+            return
+        }
+        if (state.selectedGroupId == null && state.selectedGradeId != null && foundGlobalStudent.gradeId != state.selectedGradeId) {
             updateScanFeedback(ScanFeedback(
                 student = foundGlobalStudent,
                 type = ScanResultType.WRONG_GROUP,
@@ -365,10 +400,10 @@ class FastAttendanceViewModel(
     private fun applyFilters() {
         _uiState.update { state ->
             val query = state.searchQuery.trim().lowercase()
-            val scope = if (state.selectedGradeId != null) {
-                allStudentsList.filter { it.gradeId == state.selectedGradeId }
-            } else {
-                allStudentsList
+            val scope = when {
+                state.selectedGroupId != null -> allStudentsList.filter { it.groupId == state.selectedGroupId }
+                state.selectedGradeId != null -> allStudentsList.filter { it.gradeId == state.selectedGradeId }
+                else -> allStudentsList
             }
 
             val filtered = scope.filter { student ->
@@ -472,7 +507,8 @@ class FastAttendanceViewModel(
         val activeStudents = allStudents.filter { it.deletedAt == null }
         allStudentsList = activeStudents
         val selectedGradeId = _uiState.value.selectedGradeId
-        updateLookupMaps(activeStudents, selectedGradeId)
+        val selectedGroupId = _uiState.value.selectedGroupId
+        updateLookupMaps(activeStudents, selectedGradeId, selectedGroupId)
 
         val actualScope = if (selectedGradeId != null) {
             activeStudents.filter { it.gradeId == selectedGradeId }

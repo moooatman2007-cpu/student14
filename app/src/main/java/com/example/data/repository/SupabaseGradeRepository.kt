@@ -33,6 +33,10 @@ class SupabaseGradeRepository(
     private val client = SupabaseClientProvider.client
     private val _grades = MutableStateFlow<List<Grade>>(emptyList())
 
+    fun clearCache() {
+        _grades.value = emptyList()
+    }
+
     init {
         CoroutineScope(Dispatchers.IO).launch {
             fetchGrades()

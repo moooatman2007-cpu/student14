@@ -37,6 +37,10 @@ object RepositoryProvider {
         SupabaseHomeworkRepository()
     }
 
+    val groupRepository: GroupRepository by lazy {
+        SupabaseGroupRepository()
+    }
+
     val paymentRepository: PaymentRepository by lazy {
         SupabasePaymentRepository()
     }

@@ -29,6 +29,7 @@ import java.util.concurrent.TimeUnit
 
 data class MoreUiState(
     val teacherName: String = "",
+    val teacherPhone: String? = null,
     val avatarUrl: String? = null,
     val themeMode: ThemeMode = ThemeMode.SYSTEM,
     val grades: List<Grade> = emptyList(),
@@ -46,7 +47,7 @@ data class MoreUiState(
     val wahaQrBase64: String? = null,
     val wahaConnectedPhone: String? = null,
     val wahaPairingError: String? = null,
-    val selectedPairingTab: String = "QR", // "QR" or "CODE"
+    val selectedPairingTab: String = "CODE", // Default is "CODE" for 1-phone optimization
     val pairingPhoneNumber: String = "",
     val pairingCode: String? = null,
     val isRequestingPairingCode: Boolean = false,
@@ -58,7 +59,8 @@ class MoreViewModel(
     private val gradeRepository: GradeRepository = RepositoryProvider.gradeRepository,
     private val teacherRepository: TeacherRepository = RepositoryProvider.teacherRepository,
     private val okHttpClient: OkHttpClient = defaultOkHttpClient,
-    private val ioDispatcher: kotlinx.coroutines.CoroutineDispatcher = Dispatchers.IO
+    private val ioDispatcher: kotlinx.coroutines.CoroutineDispatcher = Dispatchers.IO,
+    private val runInitialCheck: Boolean = true
 ) : ViewModel() {
 
     companion object {
@@ -84,6 +86,10 @@ class MoreViewModel(
         viewModelScope.launch {
             teacherRepository.fetchCurrentTeacher()
             (gradeRepository as? com.example.data.repository.SupabaseGradeRepository)?.fetchGrades()
+            // Check status on load
+            if (runInitialCheck) {
+                fetchWahaStatus()
+            }
         }
 
         viewModelScope.launch {
@@ -93,8 +99,10 @@ class MoreViewModel(
                 gradeRepository.getGrades()
             ) { teacher, theme, grades ->
                 val name = teacher?.fullName?.ifBlank { null } ?: teacher?.email ?: ""
+                val phone = teacher?.phoneNumber?.ifBlank { null }
                 _uiState.value.copy(
                     teacherName = name,
+                    teacherPhone = phone,
                     avatarUrl = teacher?.avatarUrl,
                     themeMode = theme,
                     grades = grades.sortedBy { it.displayOrder }
@@ -102,6 +110,41 @@ class MoreViewModel(
             }.collect { newState ->
                 _uiState.value = newState
             }
+        }
+    }
+
+    private suspend fun fetchWahaStatus() {
+        try {
+            val token = SupabaseClientProvider.client.auth.currentAccessTokenOrNull()
+            val jsonObject = JSONObject().apply { put("action", "START") }
+            val requestBody = jsonObject.toString().toRequestBody("application/json; charset=utf-8".toMediaTypeOrNull())
+
+            val requestBuilder = Request.Builder()
+                .url("https://oknpfsvmopdsgsfbbdcs.supabase.co/functions/v1/waha-session")
+                .post(requestBody)
+            if (!token.isNullOrBlank()) requestBuilder.header("Authorization", "Bearer $token")
+
+            val response = withContext(ioDispatcher) {
+                okHttpClient.newCall(requestBuilder.build()).execute()
+            }
+
+            response.use { res ->
+                if (res.isSuccessful) {
+                    val resJson = JSONObject(res.body?.string() ?: "")
+                    if (resJson.optBoolean("success", false)) {
+                        val status = resJson.optString("status", "")
+                        val connectedPhone = resJson.optString("connected_phone", "")
+                        _uiState.update {
+                            it.copy(
+                                wahaSessionStatus = status,
+                                wahaConnectedPhone = if (connectedPhone.isNotBlank()) connectedPhone else null
+                            )
+                        }
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            // Silently fail if network is down on init
         }
     }
 
@@ -163,12 +206,12 @@ class MoreViewModel(
     fun performLogout(onSuccess: () -> Unit) {
         viewModelScope.launch {
             _uiState.update { it.copy(isLoggingOut = true, logoutError = null) }
-            try {
-                SupabaseClientProvider.client.auth.signOut()
+            val result = com.example.data.auth.AccountSessionManager.logout()
+            if (result.isSuccess) {
                 _uiState.update { it.copy(isLoggingOut = false, showLogoutDialog = false) }
                 onSuccess()
-            } catch (e: Exception) {
-                val errorMsg = e.localizedMessage ?: "حدث خطأ أثناء تسجيل الخروج، يرجى المحاولة مرة أخرى."
+            } else {
+                val errorMsg = result.exceptionOrNull()?.localizedMessage ?: "حدث خطأ أثناء تسجيل الخروج، يرجى المحاولة مرة أخرى."
                 _uiState.update { it.copy(isLoggingOut = false, logoutError = errorMsg) }
             }
         }
@@ -230,21 +273,24 @@ class MoreViewModel(
     }
 
     fun openWahaPairingDialog() {
+        val initialPhone = _uiState.value.teacherPhone ?: _uiState.value.pairingPhoneNumber
         _uiState.update {
             it.copy(
                 showWahaPairingDialog = true,
                 wahaPairingError = null,
-                wahaSessionStatus = null,
-                wahaQrBase64 = null,
-                wahaConnectedPhone = null,
-                selectedPairingTab = "QR",
-                pairingPhoneNumber = "",
+                selectedPairingTab = "CODE",
+                pairingPhoneNumber = initialPhone,
                 pairingCode = null,
                 isRequestingPairingCode = false,
                 pairingCodeError = null
             )
         }
-        startWaha()
+        
+        // Only start if not already connected/working
+        val status = _uiState.value.wahaSessionStatus
+        if (status != "CONNECTED" && status != "WORKING") {
+            startWaha()
+        }
     }
 
     fun closeWahaPairingDialog() {
@@ -281,7 +327,7 @@ class MoreViewModel(
                         _uiState.update {
                             it.copy(
                                 isStartingWaha = false,
-                                wahaPairingError = "تعذر بدء ربط واتساب. الرجاء المحاولة لاحقاً."
+                                wahaPairingError = "تعذر الاتصال بخادم واتساب حالياً. يرجى التحقق من الاتصال بالإنترنت."
                             )
                         }
                         return@launch
@@ -316,30 +362,52 @@ class MoreViewModel(
                         )
                     }
 
-                    if (status == "SCAN_QR_CODE") {
-                        startWahaPolling()
-                    } else if (status == "CONNECTED" || status == "WORKING") {
+                    if (status == "CONNECTED" || status == "WORKING") {
                         stopWahaPolling()
+                    } else if (status == "SCAN_QR_CODE" && _uiState.value.selectedPairingTab == "QR") {
+                        startWahaPolling()
                     }
+                }
+            } catch (e: java.io.IOException) {
+                _uiState.update {
+                    it.copy(
+                        isStartingWaha = false,
+                        wahaPairingError = "تعذر الاتصال بالخادم. يرجى التحقق من اتصال الإنترنت."
+                    )
                 }
             } catch (e: Exception) {
                 _uiState.update {
                     it.copy(
                         isStartingWaha = false,
-                        wahaPairingError = "حدث خطأ غير متوقع أثناء ربط واتساب."
+                        wahaPairingError = "حدث خطأ غير متوقع: ${e.localizedMessage ?: "خطأ بالاتصال"}"
                     )
                 }
             }
         }
     }
 
+    private var pollingAttemptCount = 0
+
     fun startWahaPolling() {
         if (pollingJob?.isActive == true) return
         pollingJob?.cancel()
+        pollingAttemptCount = 0
         pollingJob = viewModelScope.launch {
-            while (isActive) {
-                kotlinx.coroutines.delay(4000)
+            // Poll for up to 60 iterations (~2.5 minutes timeout)
+            while (isActive && pollingAttemptCount < 60) {
+                kotlinx.coroutines.delay(2500)
+                pollingAttemptCount++
                 pollWahaStatus()
+            }
+            if (pollingAttemptCount >= 60 && isActive) {
+                val currentStatus = _uiState.value.wahaSessionStatus
+                if (currentStatus != "CONNECTED" && currentStatus != "WORKING") {
+                    _uiState.update {
+                        it.copy(
+                            pairingCodeError = "انتهت مهلة انتظار الربط. يرجى طلب كود جديد والمحاولة مرة أخرى."
+                        )
+                    }
+                }
             }
         }
     }
@@ -347,6 +415,7 @@ class MoreViewModel(
     fun stopWahaPolling() {
         pollingJob?.cancel()
         pollingJob = null
+        pollingAttemptCount = 0
     }
 
     private suspend fun pollWahaStatus() {
@@ -397,7 +466,7 @@ class MoreViewModel(
                 }
             }
         } catch (e: Exception) {
-            // Ignore polling errors gracefully
+            // Ignore temporary network glitches during polling
         }
     }
 

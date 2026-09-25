@@ -17,6 +17,10 @@ class SupabaseTeacherRepository : TeacherRepository {
     private val client = SupabaseClientProvider.client
     private val _currentTeacher = MutableStateFlow<Teacher?>(null)
 
+    fun clearCache() {
+        _currentTeacher.value = null
+    }
+
     override fun getCurrentTeacher(): Flow<Teacher?> = _currentTeacher.asStateFlow()
 
     override suspend fun fetchCurrentTeacher(): Teacher? = withContext(Dispatchers.IO) {

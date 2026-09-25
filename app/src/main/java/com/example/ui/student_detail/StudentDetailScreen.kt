@@ -199,6 +199,7 @@ fun StudentDetailScreen(
                                 StudentProfileInfoTab(
                                     student = student,
                                     grade = uiState.grade,
+                                    group = uiState.group,
                                     formattedCreatedAt = uiState.formattedCreatedAt,
                                     monthNameAr = uiState.monthNameAr,
                                     isPaymentPaid = uiState.isPaymentPaid,
@@ -209,13 +210,15 @@ fun StudentDetailScreen(
                                     globalHomeworks = uiState.globalHomeworks,
                                     globalAttendanceSummary = uiState.globalAttendanceSummary,
                                     latestMonthlyPerformance = uiState.studentMonthlyPerformance,
+                                    availableGroups = uiState.availableGroups,
                                     onTogglePayment = viewModel::toggleMonthlyPayment,
                                     onNavigateToEdit = onNavigateToEdit,
                                     onSelectTab = viewModel::selectTab,
                                     onRecordAttendance = { viewModel.openAddAttendanceDialog() },
                                     onRecordRecitation = viewModel::openAddRecitationDialog,
                                     onRecordHomework = viewModel::openAddHomeworkDialog,
-                                    onRecordExam = viewModel::openAddExamDialog
+                                    onRecordExam = viewModel::openAddExamDialog,
+                                    onAssignGroup = viewModel::assignGroup
                                 )
                             }
                             StudentDetailTab.PAYMENTS -> {

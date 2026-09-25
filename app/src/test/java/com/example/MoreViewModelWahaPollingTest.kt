@@ -135,7 +135,8 @@ class MoreViewModelWahaPollingTest {
             gradeRepository = gradeRepository,
             teacherRepository = teacherRepository,
             okHttpClient = client,
-            ioDispatcher = testDispatcher
+            ioDispatcher = testDispatcher,
+            runInitialCheck = false
         )
         testDispatcher.scheduler.advanceUntilIdle()
 
@@ -145,13 +146,13 @@ class MoreViewModelWahaPollingTest {
         // Start polling once
         viewModel.startWahaPolling()
 
-        // Advance past 1 interval (4000ms)
-        testDispatcher.scheduler.advanceTimeBy(4100)
+        // Advance past 1 interval (2500ms)
+        testDispatcher.scheduler.advanceTimeBy(2600)
         assertEquals(1, requestCount.get())
         assertEquals(1, bodiesClosedCount.get())
 
-        // Advance past 2nd interval (8000ms total)
-        testDispatcher.scheduler.advanceTimeBy(4000)
+        // Advance past 2nd interval (5000ms total)
+        testDispatcher.scheduler.advanceTimeBy(2500)
         assertEquals(2, requestCount.get())
         assertEquals(2, bodiesClosedCount.get())
 
@@ -170,7 +171,8 @@ class MoreViewModelWahaPollingTest {
             gradeRepository = gradeRepository,
             teacherRepository = teacherRepository,
             okHttpClient = client,
-            ioDispatcher = testDispatcher
+            ioDispatcher = testDispatcher,
+            runInitialCheck = false
         )
         testDispatcher.scheduler.advanceUntilIdle()
 
@@ -181,14 +183,14 @@ class MoreViewModelWahaPollingTest {
         viewModel.startWahaPolling()
         viewModel.startWahaPolling()
 
-        // Advance 1 cycle (4000ms)
-        testDispatcher.scheduler.advanceTimeBy(4100)
+        // Advance 1 cycle (2500ms)
+        testDispatcher.scheduler.advanceTimeBy(2600)
 
         // Must only be 1 request per cycle, not 3!
         assertEquals(1, requestCount.get())
 
         // Advance another cycle
-        testDispatcher.scheduler.advanceTimeBy(4000)
+        testDispatcher.scheduler.advanceTimeBy(2500)
         assertEquals(2, requestCount.get())
 
         viewModel.stopWahaPolling()
@@ -202,13 +204,14 @@ class MoreViewModelWahaPollingTest {
             gradeRepository = gradeRepository,
             teacherRepository = teacherRepository,
             okHttpClient = client,
-            ioDispatcher = testDispatcher
+            ioDispatcher = testDispatcher,
+            runInitialCheck = false
         )
         testDispatcher.scheduler.advanceUntilIdle()
         requestCount.set(0)
 
         viewModel.startWahaPolling()
-        testDispatcher.scheduler.advanceTimeBy(4100)
+        testDispatcher.scheduler.advanceTimeBy(2600)
         assertEquals(1, requestCount.get())
 
         // Stop polling
@@ -229,13 +232,14 @@ class MoreViewModelWahaPollingTest {
             gradeRepository = gradeRepository,
             teacherRepository = teacherRepository,
             okHttpClient = client,
-            ioDispatcher = testDispatcher
+            ioDispatcher = testDispatcher,
+            runInitialCheck = false
         )
         testDispatcher.scheduler.advanceUntilIdle()
         requestCount.set(0)
 
         viewModel.startWahaPolling()
-        testDispatcher.scheduler.advanceTimeBy(4100)
+        testDispatcher.scheduler.advanceTimeBy(2600)
         assertEquals(1, requestCount.get())
 
         val countBeforeClose = requestCount.get()
@@ -258,13 +262,14 @@ class MoreViewModelWahaPollingTest {
             gradeRepository = gradeRepository,
             teacherRepository = teacherRepository,
             okHttpClient = client,
-            ioDispatcher = testDispatcher
+            ioDispatcher = testDispatcher,
+            runInitialCheck = false
         )
         testDispatcher.scheduler.advanceUntilIdle()
         requestCount.set(0)
 
         viewModel.startWahaPolling()
-        testDispatcher.scheduler.advanceTimeBy(4100)
+        testDispatcher.scheduler.advanceTimeBy(2600)
 
         assertEquals(1, requestCount.get())
         assertEquals("CONNECTED", viewModel.uiState.value.wahaSessionStatus)
@@ -283,12 +288,13 @@ class MoreViewModelWahaPollingTest {
             gradeRepository = gradeRepository,
             teacherRepository = teacherRepository,
             okHttpClient = client,
-            ioDispatcher = testDispatcher
+            ioDispatcher = testDispatcher,
+            runInitialCheck = false
         )
         testDispatcher.scheduler.advanceUntilIdle()
 
         viewModel.startWahaPolling()
-        testDispatcher.scheduler.advanceTimeBy(16500) // 4 cycles
+        testDispatcher.scheduler.advanceTimeBy(10500) // 4 cycles
 
         assertEquals(4, requestCount.get())
         // Max concurrent requests must never exceed 1

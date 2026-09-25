@@ -38,6 +38,10 @@ class SupabaseStudentRepository(
     private val client = SupabaseClientProvider.client
     private val _students = MutableStateFlow<List<Student>>(emptyList())
 
+    fun clearCache() {
+        _students.value = emptyList()
+    }
+
     suspend fun fetchStudents(): List<Student> = withContext(Dispatchers.IO) {
         val teacherId = SupabaseClientProvider.mockTeacherId ?: client.auth.currentUserOrNull()?.id
         if (teacherId == null) {

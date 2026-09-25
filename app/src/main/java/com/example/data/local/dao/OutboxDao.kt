@@ -45,4 +45,10 @@ interface OutboxDao {
 
     @Query("DELETE FROM outbox_operations WHERE id = :id")
     suspend fun deleteOperation(id: String)
+
+    @Query("DELETE FROM outbox_operations WHERE teacher_id = :teacherId")
+    suspend fun clearOperationsForTeacher(teacherId: String)
+
+    @Query("DELETE FROM outbox_operations")
+    suspend fun clearAllOperations()
 }

@@ -13,6 +13,7 @@ data class Student(
     @SerialName("has_whatsapp") val hasWhatsApp: Boolean = true,
     @SerialName("alternative_phone") val alternativePhone: String? = null,
     @SerialName("teacher_id") val teacherId: String? = null,
+    @SerialName("group_id") val groupId: String? = null,
     @SerialName("deleted_at") val deletedAt: String? = null,
     @SerialName("created_at") val createdAtRaw: String? = null,
     @SerialName("updated_at") val updatedAtRaw: String? = null

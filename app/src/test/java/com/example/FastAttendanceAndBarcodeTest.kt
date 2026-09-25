@@ -493,6 +493,7 @@ class FastAttendanceAndBarcodeTest {
 
         // Create failing repository
         val failingAttendanceRepo = object : AttendanceRepository {
+            override fun getAllAttendanceForTeacher(): Flow<List<Attendance>> = flowOf(emptyList())
             override fun getAttendanceForStudent(studentId: String): Flow<List<Attendance>> = flowOf(emptyList())
             override fun getAttendanceForStudentByMonth(studentId: String, year: Int, month: Int): Flow<List<Attendance>> = flowOf(emptyList())
             override suspend fun getAttendanceSummaryForStudent(studentId: String, year: Int, month: Int): AttendanceSummary = AttendanceSummary()
@@ -554,6 +555,7 @@ class FastAttendanceAndBarcodeTest {
 
         var shouldFail = true
         val retryableRepo = object : AttendanceRepository {
+            override fun getAllAttendanceForTeacher(): Flow<List<Attendance>> = flowOf(emptyList())
             override fun getAttendanceForStudent(studentId: String): Flow<List<Attendance>> = flowOf(emptyList())
             override fun getAttendanceForStudentByMonth(studentId: String, year: Int, month: Int): Flow<List<Attendance>> = flowOf(emptyList())
             override suspend fun getAttendanceSummaryForStudent(studentId: String, year: Int, month: Int): AttendanceSummary = AttendanceSummary()

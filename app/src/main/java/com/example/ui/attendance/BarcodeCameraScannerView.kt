@@ -124,27 +124,26 @@ private fun CameraPreviewScanner(
 
     val cameraExecutor = remember { Executors.newSingleThreadExecutor() }
 
-    // Configure ML Kit once for 1D Barcode scanning
+    // Configure ML Kit once specifically for Code 128 (and standard formats) with optimized speed
     val options = remember {
         BarcodeScannerOptions.Builder()
-            .setBarcodeFormats(
-                Barcode.FORMAT_CODE_128,
-                Barcode.FORMAT_CODE_39,
-                Barcode.FORMAT_EAN_13,
-                Barcode.FORMAT_UPC_A
-            )
+            .setBarcodeFormats(Barcode.FORMAT_CODE_128)
             .build()
     }
     val barcodeScanner: BarcodeScanner = remember { BarcodeScanning.getClient(options) }
 
-    // Use Atomic references for debounce tracking so updates do NOT trigger Compose recomposition
+    // Use Atomic references for debounce tracking (500ms debounce window) so updates do NOT trigger Compose recomposition
     val lastScannedCodeRef = remember { AtomicReference("") }
     val lastScannedTimeRef = remember { AtomicLong(0L) }
 
     DisposableEffect(Unit) {
         onDispose {
-            cameraExecutor.shutdown()
-            barcodeScanner.close()
+            try {
+                cameraExecutor.shutdown()
+                barcodeScanner.close()
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
         }
     }
 
@@ -165,55 +164,73 @@ private fun CameraPreviewScanner(
 
                 val cameraProviderFuture = ProcessCameraProvider.getInstance(ctx)
                 cameraProviderFuture.addListener({
-                    val cameraProvider = cameraProviderFuture.get()
+                    try {
+                        val cameraProvider = cameraProviderFuture.get()
 
-                    val preview = Preview.Builder().build().also {
-                        it.setSurfaceProvider(previewView.surfaceProvider)
-                    }
+                        val preview = Preview.Builder().build().also {
+                            it.setSurfaceProvider(previewView.surfaceProvider)
+                        }
 
-                    val imageAnalysis = ImageAnalysis.Builder()
-                        .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
-                        .build()
+                        val imageAnalysis = ImageAnalysis.Builder()
+                            .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+                            .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_YUV_420_888)
+                            .build()
 
-                    imageAnalysis.setAnalyzer(cameraExecutor) { imageProxy ->
-                        val mediaImage = imageProxy.image
-                        if (mediaImage != null) {
-                            val inputImage = InputImage.fromMediaImage(
-                                mediaImage,
-                                imageProxy.imageInfo.rotationDegrees
-                            )
+                        imageAnalysis.setAnalyzer(cameraExecutor) { imageProxy ->
+                            val frameStartTime = System.currentTimeMillis()
+                            val mediaImage = imageProxy.image
+                            if (mediaImage != null) {
+                                val inputImage = InputImage.fromMediaImage(
+                                    mediaImage,
+                                    imageProxy.imageInfo.rotationDegrees
+                                )
 
-                            barcodeScanner.process(inputImage)
-                                .addOnSuccessListener { barcodes ->
-                                    for (barcode in barcodes) {
-                                        val rawValue = barcode.rawValue ?: continue
-                                        if (rawValue.isNotBlank()) {
-                                            val currentTime = System.currentTimeMillis()
-                                            val lastCode = lastScannedCodeRef.get()
-                                            val lastTime = lastScannedTimeRef.get()
+                                val mlStartTime = System.currentTimeMillis()
+                                barcodeScanner.process(inputImage)
+                                    .addOnSuccessListener { barcodes ->
+                                        val mlDuration = System.currentTimeMillis() - mlStartTime
+                                        if (barcodes.isNotEmpty() && com.example.BuildConfig.DEBUG) {
+                                            android.util.Log.d("BarcodePerf", "Frame processed in ${System.currentTimeMillis() - frameStartTime}ms (ML Kit took ${mlDuration}ms)")
+                                        }
 
-                                            // Debounce check: 1.0 seconds between identical scans
-                                            if (rawValue != lastCode || (currentTime - lastTime > 1000)) {
-                                                lastScannedCodeRef.set(rawValue)
-                                                lastScannedTimeRef.set(currentTime)
+                                        for (barcode in barcodes) {
+                                            val rawValue = barcode.rawValue ?: continue
+                                            if (rawValue.isNotBlank()) {
+                                                val currentTime = System.currentTimeMillis()
+                                                val lastCode = lastScannedCodeRef.get()
+                                                val lastTime = lastScannedTimeRef.get()
 
-                                                // Safely dispatch callback to Main UI thread
-                                                CoroutineScope(Dispatchers.Main).launch {
-                                                    currentOnBarcodeScanned(rawValue)
+                                                // 500ms strict debouncing for rapid scanning
+                                                if (rawValue != lastCode || (currentTime - lastTime > 500)) {
+                                                    lastScannedCodeRef.set(rawValue)
+                                                    lastScannedTimeRef.set(currentTime)
+
+                                                    if (com.example.BuildConfig.DEBUG) {
+                                                        android.util.Log.d("BarcodePerf", "Barcode detected: $rawValue")
+                                                    }
+
+                                                    // Dispatch callback instantly on Main UI thread
+                                                    CoroutineScope(Dispatchers.Main).launch {
+                                                        currentOnBarcodeScanned(rawValue)
+                                                    }
+                                                    break
                                                 }
                                             }
                                         }
                                     }
-                                }
-                                .addOnCompleteListener {
-                                    imageProxy.close()
-                                }
-                        } else {
-                            imageProxy.close()
+                                    .addOnFailureListener { e ->
+                                        if (com.example.BuildConfig.DEBUG) {
+                                            android.util.Log.e("BarcodePerf", "Barcode scan failure", e)
+                                        }
+                                    }
+                                    .addOnCompleteListener {
+                                        imageProxy.close()
+                                    }
+                            } else {
+                                imageProxy.close()
+                            }
                         }
-                    }
 
-                    try {
                         cameraProvider.unbindAll()
                         cameraProvider.bindToLifecycle(
                             lifecycleOwner,

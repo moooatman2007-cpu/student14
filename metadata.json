@@ -1,6 +1,6 @@
 {
-  "name": "Remix Student Manager",
-  "description": "تطبيق احترافي لإدارة بيانات الطلاب والصفوف المدرسية للمدرسين",
+  "name": "MIDAR",
+  "description": "منصة مدار - كل طلابك في مكان واحد. إدارة الطلاب، الحضور، الدرجات والتقارير بكل سهولة.",
   "requestFramePermissions": [],
   "majorCapabilities": [
     "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"

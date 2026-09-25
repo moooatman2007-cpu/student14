@@ -16,9 +16,11 @@ import com.example.data.local.entity.*
         PaymentEntity::class,
         OutboxEntity::class,
         GradeEntity::class,
-        HomeworkEntity::class
+        HomeworkEntity::class,
+        GroupEntity::class,
+        GroupDayEntity::class
     ],
-    version = 6,
+    version = 7,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -30,8 +32,51 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun outboxDao(): OutboxDao
     abstract fun gradeDao(): GradeDao
     abstract fun homeworkDao(): HomeworkDao
+    abstract fun groupDao(): GroupDao
+    abstract fun groupDayDao(): GroupDayDao
 
     companion object {
+        val MIGRATION_6_7 = object : Migration(6, 7) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `groups` (
+                        `id` TEXT NOT NULL,
+                        `teacher_id` TEXT NOT NULL,
+                        `grade_id` TEXT NOT NULL,
+                        `name` TEXT NOT NULL,
+                        `active` INTEGER NOT NULL DEFAULT 1,
+                        `start_time` TEXT NOT NULL,
+                        `end_time` TEXT NOT NULL,
+                        `capacity` INTEGER,
+                        `location` TEXT,
+                        `created_at` INTEGER NOT NULL,
+                        `updated_at` INTEGER NOT NULL,
+                        PRIMARY KEY(`id`)
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_groups_teacher_id` ON `groups` (`teacher_id`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_groups_teacher_id_grade_id` ON `groups` (`teacher_id`, `grade_id`)")
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS `index_groups_teacher_id_grade_id_name` ON `groups` (`teacher_id`, `grade_id`, `name`)")
+
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `group_days` (
+                        `teacher_id` TEXT NOT NULL,
+                        `group_id` TEXT NOT NULL,
+                        `day_of_week` TEXT NOT NULL,
+                        PRIMARY KEY(`group_id`, `day_of_week`),
+                        FOREIGN KEY(`group_id`) REFERENCES `groups`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_group_days_group_id` ON `group_days` (`group_id`)")
+
+                db.execSQL("ALTER TABLE `students` ADD COLUMN `group_id` TEXT")
+                db.execSQL("ALTER TABLE `attendance` ADD COLUMN `group_id` TEXT")
+            }
+        }
         val MIGRATION_1_2 = object : Migration(1, 2) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL(

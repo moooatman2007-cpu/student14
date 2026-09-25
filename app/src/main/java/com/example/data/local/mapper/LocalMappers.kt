@@ -4,6 +4,8 @@ import com.example.core.model.Attendance
 import com.example.core.model.AttendanceStatus
 import com.example.core.model.Exam
 import com.example.core.model.Grade
+import com.example.core.model.Group
+import com.example.core.model.GroupDay
 import com.example.core.model.Homework
 import com.example.core.model.HomeworkStatus
 import com.example.core.model.LessonPayment
@@ -12,6 +14,8 @@ import com.example.core.model.Student
 import com.example.data.local.entity.AttendanceEntity
 import com.example.data.local.entity.ExamEntity
 import com.example.data.local.entity.GradeEntity
+import com.example.data.local.entity.GroupDayEntity
+import com.example.data.local.entity.GroupEntity
 import com.example.data.local.entity.HomeworkEntity
 import com.example.data.local.entity.PaymentEntity
 import com.example.data.local.entity.RecitationEntity
@@ -49,6 +53,7 @@ fun Student.toEntity(): StudentEntity {
         hasWhatsApp = hasWhatsApp,
         alternativePhone = alternativePhone,
         teacherId = teacherId,
+        groupId = groupId,
         deletedAt = deletedAt,
         createdAtRaw = createdAtRaw,
         updatedAtRaw = updatedAtRaw
@@ -65,6 +70,7 @@ fun StudentEntity.toDomain(): Student {
         hasWhatsApp = hasWhatsApp,
         alternativePhone = alternativePhone,
         teacherId = teacherId,
+        groupId = groupId,
         deletedAt = deletedAt,
         createdAtRaw = createdAtRaw,
         updatedAtRaw = updatedAtRaw
@@ -77,6 +83,7 @@ fun Attendance.toEntity(): AttendanceEntity {
         attendanceId = attendanceId,
         studentId = studentId,
         teacherId = teacherId,
+        groupId = groupId,
         date = date,
         status = status.name,
         note = note,
@@ -90,6 +97,7 @@ fun AttendanceEntity.toDomain(): Attendance {
         attendanceId = attendanceId,
         studentId = studentId,
         teacherId = teacherId,
+        groupId = groupId,
         date = date,
         status = AttendanceStatus.fromString(status),
         note = note,
@@ -221,5 +229,54 @@ fun HomeworkEntity.toDomain(): Homework {
         note = note,
         createdAt = createdAt,
         updatedAt = updatedAt
+    )
+}
+
+// --- Group Mapping ---
+fun Group.toEntity(): GroupEntity {
+    return GroupEntity(
+        id = id,
+        teacherId = teacherId,
+        gradeId = gradeId,
+        name = name,
+        active = active,
+        startTime = startTime,
+        endTime = endTime,
+        capacity = capacity,
+        location = location,
+        createdAt = createdAt,
+        updatedAt = updatedAt
+    )
+}
+
+fun GroupEntity.toDomain(): Group {
+    return Group(
+        id = id,
+        teacherId = teacherId,
+        gradeId = gradeId,
+        name = name,
+        active = active,
+        startTime = startTime,
+        endTime = endTime,
+        capacity = capacity,
+        location = location,
+        createdAt = createdAt,
+        updatedAt = updatedAt
+    )
+}
+
+fun GroupDayEntity.toDomain(): GroupDay {
+    return GroupDay(
+        teacherId = teacherId,
+        groupId = groupId,
+        dayOfWeek = dayOfWeek
+    )
+}
+
+fun GroupDay.toEntity(): GroupDayEntity {
+    return GroupDayEntity(
+        teacherId = teacherId,
+        groupId = groupId,
+        dayOfWeek = dayOfWeek
     )
 }

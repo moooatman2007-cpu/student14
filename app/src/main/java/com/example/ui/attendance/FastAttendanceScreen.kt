@@ -78,6 +78,7 @@ import com.example.ui.theme.PrimaryIndigoLight
 @Composable
 fun FastAttendanceScreen(
     gradeIdArg: String? = null,
+    groupIdArg: String? = null,
     onNavigateBack: () -> Unit,
     viewModel: FastAttendanceViewModel = viewModel(),
     modifier: Modifier = Modifier
@@ -85,8 +86,10 @@ fun FastAttendanceScreen(
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val context = LocalContext.current
 
-    LaunchedEffect(gradeIdArg) {
-        if (!gradeIdArg.isNullOrBlank()) {
+    LaunchedEffect(gradeIdArg, groupIdArg) {
+        if (!groupIdArg.isNullOrBlank()) {
+            viewModel.setInitialGroupId(groupIdArg)
+        } else if (!gradeIdArg.isNullOrBlank()) {
             viewModel.setInitialGradeId(gradeIdArg)
         }
     }
@@ -108,12 +111,12 @@ fun FastAttendanceScreen(
                 title = {
                     Column {
                         Text(
-                            text = "تسجيل الحضور السريع",
+                            text = uiState.groupName ?: (uiState.grades.find { it.id == uiState.selectedGradeId }?.name ?: "تسجيل الحضور السريع"),
                             style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
                             color = MaterialTheme.colorScheme.onSurface
                         )
                         Text(
-                            text = "تاريخ اليوم: ${uiState.currentDate}",
+                            text = "${uiState.currentDate} • ${uiState.allStudentsInScope.size} طالب",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -500,7 +503,7 @@ fun FastAttendanceScreen(
                                             ScanResultType.SUCCESS_PRESENT -> "تم تسجيل الحضور ✓"
                                             ScanResultType.ALREADY_PRESENT -> "مسجل مسبقاً ✓"
                                             ScanResultType.NOT_FOUND -> "كود غير معروف ❌"
-                                            ScanResultType.WRONG_GROUP -> "خارج هذه المجموعة ⚠️"
+                                            ScanResultType.WRONG_GROUP -> "الطالب غير موجود في هذه المجموعة ⚠️"
                                         },
                                         style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
                                         color = colorScheme.first

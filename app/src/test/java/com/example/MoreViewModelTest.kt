@@ -109,16 +109,16 @@ class MoreViewModelTest {
     fun testSelectPairingTabUpdatesStateAndClearsError() = runTest {
         testDispatcher.scheduler.advanceUntilIdle()
 
-        // Default tab should be QR
-        assertEquals("QR", viewModel.uiState.value.selectedPairingTab)
-
-        // Switch to CODE
-        viewModel.selectPairingTab("CODE")
+        // Default tab should be CODE (for 1-phone optimization)
         assertEquals("CODE", viewModel.uiState.value.selectedPairingTab)
 
-        // Switch back to QR
+        // Switch to QR
         viewModel.selectPairingTab("QR")
         assertEquals("QR", viewModel.uiState.value.selectedPairingTab)
+
+        // Switch back to CODE
+        viewModel.selectPairingTab("CODE")
+        assertEquals("CODE", viewModel.uiState.value.selectedPairingTab)
     }
 
     @Test
@@ -171,8 +171,8 @@ class MoreViewModelTest {
         testDispatcher.scheduler.advanceUntilIdle()
 
         assertTrue(viewModel.uiState.value.showWahaPairingDialog)
-        assertEquals("QR", viewModel.uiState.value.selectedPairingTab)
-        assertEquals("", viewModel.uiState.value.pairingPhoneNumber)
+        assertEquals("CODE", viewModel.uiState.value.selectedPairingTab)
+        assertEquals("01012345678", viewModel.uiState.value.pairingPhoneNumber)
         assertNull(viewModel.uiState.value.pairingCode)
         assertNull(viewModel.uiState.value.pairingCodeError)
 

@@ -22,6 +22,7 @@ data class SupabaseAttendanceDto(
     @SerialName("id") val id: String? = null,
     @SerialName("teacher_id") val teacherId: String? = null,
     @SerialName("student_id") val studentId: String,
+    @SerialName("group_id") val groupId: String? = null,
     @SerialName("date") val date: String,
     @SerialName("status") val status: String,
     @SerialName("note") val note: String? = null,
@@ -33,6 +34,7 @@ data class SupabaseAttendanceDto(
             attendanceId = id ?: "",
             studentId = studentId,
             teacherId = teacherId ?: this.teacherId ?: "",
+            groupId = groupId,
             date = date,
             status = AttendanceStatus.fromString(status),
             note = note,
@@ -46,6 +48,7 @@ data class SupabaseAttendanceDto(
 data class UpsertAttendanceRequest(
     @SerialName("teacher_id") val teacherId: String,
     @SerialName("student_id") val studentId: String,
+    @SerialName("group_id") val groupId: String? = null,
     @SerialName("date") val date: String,
     @SerialName("status") val status: String,
     @SerialName("note") val note: String? = null
@@ -55,6 +58,7 @@ data class Attendance(
     val attendanceId: String,
     val studentId: String,
     val teacherId: String = "",
+    val groupId: String? = null,
     val date: String, // format "YYYY-MM-DD" e.g. "2026-09-18"
     val status: AttendanceStatus,
     val note: String? = null,

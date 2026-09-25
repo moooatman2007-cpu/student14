@@ -86,20 +86,22 @@ class ReportsAndStatisticsAuditTest {
         val reportsViewModel = ReportsViewModel(
             studentRepository = studentRepository,
             gradeRepository = gradeRepository,
-            monthlyReportRepository = monthlyReportRepository
+            attendanceRepository = attendanceRepository,
+            recitationRepository = recitationRepository,
+            examRepository = examRepository,
+            homeworkRepository = com.example.data.repository.MockHomeworkRepository()
         )
+        testDispatcher.scheduler.advanceUntilIdle()
+        reportsViewModel.selectTab(com.example.ui.reports.ReportsTab.STUDENT)
+        reportsViewModel.selectStudent(student.studentId)
         testDispatcher.scheduler.advanceUntilIdle()
 
         val state = reportsViewModel.uiState.value
-        val overview = state.monthlyOverview
-        assertNotNull(overview)
-
-        val studentPerf = overview?.studentPerformances?.find { it.student.studentId == student.studentId }
-        assertNotNull(studentPerf)
-        assertEquals(100f, studentPerf?.attendanceSummary?.attendanceRate)
-        assertEquals(100f, studentPerf?.recitationSummary?.averagePercentage)
-        assertEquals(100f, studentPerf?.examSummary?.averagePercentage)
-        assertEquals("الأول الثانوي", state.gradeMap[student.gradeId])
+        val studentReport = state.studentReport
+        assertNotNull(studentReport)
+        assertEquals(100f, studentReport?.attendancePercent)
+        assertEquals(100f, studentReport?.recitationAvg)
+        assertEquals(100f, studentReport?.examAvg)
     }
 
     /**
@@ -163,20 +165,24 @@ class ReportsAndStatisticsAuditTest {
         val reportsViewModel = ReportsViewModel(
             studentRepository = studentRepository,
             gradeRepository = gradeRepository,
-            monthlyReportRepository = monthlyReportRepository
+            attendanceRepository = attendanceRepository,
+            recitationRepository = recitationRepository,
+            examRepository = examRepository,
+            homeworkRepository = com.example.data.repository.MockHomeworkRepository()
         )
         testDispatcher.scheduler.advanceUntilIdle()
 
         // Filter strictly by secondary grade
+        reportsViewModel.selectTab(com.example.ui.reports.ReportsTab.GROUP)
         reportsViewModel.selectGrade(secGrade.id)
         testDispatcher.scheduler.advanceUntilIdle()
 
-        val overview = reportsViewModel.uiState.value.monthlyOverview
-        assertNotNull(overview)
-        assertEquals(secGrade.id, overview?.gradeId)
-        assertTrue(overview?.studentPerformances?.any { it.student.studentId == secStudent.studentId } == true)
+        val groupReport = reportsViewModel.uiState.value.groupReport
+        assertNotNull(groupReport)
+        assertEquals(secGrade.id, groupReport?.grade?.id)
+        assertTrue(groupReport?.studentStats?.any { it.student.studentId == secStudent.studentId } == true)
         // Preparatory student must NOT be present in this secondary grade overview
-        assertFalse(overview?.studentPerformances?.any { it.student.studentId == prepStudent.studentId } == true)
+        assertFalse(groupReport?.studentStats?.any { it.student.studentId == prepStudent.studentId } == true)
     }
 
     /**

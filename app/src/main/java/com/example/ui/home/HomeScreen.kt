@@ -28,6 +28,8 @@ import androidx.compose.material.icons.filled.AutoStories
 import androidx.compose.material.icons.filled.CalendarToday
 import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.Groups
+import androidx.compose.material.icons.filled.AccessTime
+import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.MenuBook
 import androidx.compose.material.icons.filled.PersonAdd
 import androidx.compose.material.icons.filled.PlayArrow
@@ -94,7 +96,7 @@ fun HomeScreen(
     onNavigateToStudents: (String?) -> Unit,
     onNavigateToSearch: () -> Unit,
     onNavigateToReports: () -> Unit = {},
-    onNavigateToFastAttendance: (String?) -> Unit = {},
+    onNavigateToFastAttendance: (String?, String?) -> Unit = { _, _ -> },
     onNavigateToBarcodes: () -> Unit = {},
     onNavigateToStartLesson: () -> Unit = {},
     onNavigateToStudentDetail: (String) -> Unit = {},
@@ -196,7 +198,7 @@ fun HomeScreen(
                             title = "حضور سريع",
                             icon = Icons.Default.CalendarToday,
                             color = PrimaryIndigo,
-                            onClick = { onNavigateToFastAttendance(null) },
+                            onClick = { onNavigateToFastAttendance(null, null) },
                             modifier = Modifier.weight(1f)
                         )
                     }
@@ -358,6 +360,85 @@ fun HomeScreen(
                                     Icon(Icons.Default.PlayArrow, null, tint = EmeraldGreen, modifier = Modifier.size(16.dp))
                                     Spacer(modifier = Modifier.width(8.dp))
                                     Text("ابدأ تسجيل الحضور", color = EmeraldGreen, style = MaterialTheme.typography.labelLarge)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 4.b Today's Groups Scheduled Section
+            if (uiState.todayGroups.isNotEmpty()) {
+                item {
+                    Column(verticalArrangement = Arrangement.spacedBy(Dimens.Spacing12)) {
+                        Text(
+                            text = "📅 مجموعات اليوم",
+                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        uiState.todayGroups.forEach { tg ->
+                            Card(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { onNavigateToFastAttendance(null, tg.id) }
+                                    .testTag("today_group_card_${tg.id}"),
+                                shape = RoundedCornerShape(16.dp),
+                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(16.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = tg.name,
+                                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                                            color = MaterialTheme.colorScheme.onSurface
+                                        )
+                                        Text(
+                                            text = tg.gradeName,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                        Spacer(modifier = Modifier.height(6.dp))
+                                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                                Icon(Icons.Default.AccessTime, null, tint = PrimaryIndigo, modifier = Modifier.size(14.dp))
+                                                Spacer(modifier = Modifier.width(4.dp))
+                                                Text("${tg.startTime} - ${tg.endTime}", style = MaterialTheme.typography.bodySmall)
+                                            }
+                                            if (!tg.location.isNullOrBlank()) {
+                                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                                    Icon(Icons.Default.LocationOn, null, tint = WarmAmber, modifier = Modifier.size(14.dp))
+                                                    Spacer(modifier = Modifier.width(4.dp))
+                                                    Text(tg.location, style = MaterialTheme.typography.bodySmall)
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    Column(horizontalAlignment = Alignment.End) {
+                                        Surface(
+                                            shape = RoundedCornerShape(8.dp),
+                                            color = PrimaryIndigoLight
+                                        ) {
+                                            Text(
+                                                text = "${tg.studentCount} طالب",
+                                                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                                                color = PrimaryIndigo,
+                                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                            )
+                                        }
+                                        Spacer(modifier = Modifier.height(4.dp))
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Text("تسجيل", style = MaterialTheme.typography.bodySmall, color = EmeraldGreen, fontWeight = FontWeight.Bold)
+                                            Icon(Icons.Default.PlayArrow, null, tint = EmeraldGreen, modifier = Modifier.size(14.dp))
+                                        }
+                                    }
                                 }
                             }
                         }
