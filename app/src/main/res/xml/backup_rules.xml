@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<full-backup-content>
+    <exclude domain="database" path="quran_app.db"/>
+    <exclude domain="database" path="quran_app.db-wal"/>
+    <exclude domain="database" path="quran_app.db-shm"/>
+</full-backup-content>

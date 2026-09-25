@@ -1,0 +1,8 @@
+{
+  "name": "Remix Student Manager",
+  "description": "تطبيق احترافي لإدارة بيانات الطلاب والصفوف المدرسية للمدرسين",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

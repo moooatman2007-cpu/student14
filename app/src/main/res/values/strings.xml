@@ -1,0 +1,10 @@
+<resources>
+    <string name="app_name">Student Manager</string>
+    <string name="app_name_ar">إدارة الطلاب</string>
+    <string name="welcome_greeting">مرحبًا 👋</string>
+    <string name="welcome_subtitle">إدارة طلابك بسهولة</string>
+    <string name="nav_home">الرئيسية</string>
+    <string name="nav_students">الطلاب</string>
+    <string name="nav_reports">التقارير</string>
+    <string name="nav_more">المزيد</string>
+</resources>
