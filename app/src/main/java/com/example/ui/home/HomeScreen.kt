@@ -229,41 +229,70 @@ fun HomeScreen(
                 Card(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clickable { onNavigateToStudents(null) },
-                    shape = RoundedCornerShape(24.dp),
+                        .clickable { onNavigateToStudents(null) }
+                        .testTag("students_overview_card"),
+                    shape = RoundedCornerShape(20.dp),
                     colors = CardDefaults.cardColors(containerColor = DarkNavyCard),
-                    elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
+                    elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
                 ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(24.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Column {
-                            Text(
-                                text = "👥 الطلاب",
-                                style = MaterialTheme.typography.titleMedium,
-                                color = Color.White.copy(alpha = 0.8f)
-                            )
-                            Spacer(modifier = Modifier.height(4.dp))
-                            Text(
-                                text = "${uiState.stats.totalStudents}",
-                                style = MaterialTheme.typography.displayMedium.copy(fontWeight = FontWeight.Black),
-                                color = Color.White
-                            )
-                            Text(
-                                text = "إجمالي الطلاب",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = Color.White.copy(alpha = 0.6f)
-                            )
-                        }
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.ArrowForward,
-                            contentDescription = null,
-                            tint = Color.White.copy(alpha = 0.5f)
+                    Box(modifier = Modifier.fillMaxWidth()) {
+                        // Subtle, ultra-faint brand watermark in end corner far from text
+                        com.example.ui.components.MidarWatermarkBackground(
+                            modifier = Modifier
+                                .align(Alignment.BottomEnd)
+                                .padding(end = 12.dp, bottom = 6.dp),
+                            alpha = 0.03f,
+                            size = 75.dp
                         )
+
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 20.dp, vertical = 18.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Column(
+                                verticalArrangement = Arrangement.spacedBy(2.dp)
+                            ) {
+                                Text(
+                                    text = "👥 الطلاب",
+                                    style = MaterialTheme.typography.titleMedium.copy(
+                                        fontWeight = FontWeight.Bold
+                                    ),
+                                    color = Color.White.copy(alpha = 0.9f)
+                                )
+                                Spacer(modifier = Modifier.height(2.dp))
+                                Text(
+                                    text = "${uiState.stats.totalStudents}",
+                                    style = MaterialTheme.typography.displayMedium.copy(
+                                        fontWeight = FontWeight.Black,
+                                        fontSize = 42.sp
+                                    ),
+                                    color = Color.White
+                                )
+                                Text(
+                                    text = "إجمالي الطلاب المسجلين",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = Color.White.copy(alpha = 0.7f)
+                                )
+                            }
+
+                            Box(
+                                contentAlignment = Alignment.Center,
+                                modifier = Modifier
+                                    .size(40.dp)
+                                    .clip(CircleShape)
+                                    .background(Color.White.copy(alpha = 0.12f))
+                            ) {
+                                Icon(
+                                    imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+                                    contentDescription = "عرض الطلاب",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                        }
                     }
                 }
             }

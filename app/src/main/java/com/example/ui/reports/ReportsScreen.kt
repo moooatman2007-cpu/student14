@@ -12,6 +12,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
+import androidx.compose.material.icons.automirrored.filled.Assignment
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -212,7 +213,7 @@ fun DailyDateBar(
 ) {
     val isToday = selectedDate == LocalDate.now()
     val formattedDate = remember(selectedDate) {
-        val formatter = DateTimeFormatter.ofPattern("EEEE, d MMMM yyyy", Locale("ar"))
+        val formatter = DateTimeFormatter.ofPattern("EEEE, d MMMM yyyy", Locale.forLanguageTag("ar"))
         selectedDate.format(formatter)
     }
 
@@ -819,7 +820,7 @@ fun LazyListScope.studentReportContent(
                     value = String.format(Locale.US, "%.0f%%", report.homeworkPercent),
                     subtitle = "تم: ${report.homeworkCompletedCount} | لم يتم: ${report.homeworkIncompleteCount}",
                     color = ElectricBlue,
-                    icon = Icons.Default.Assignment,
+                    icon = Icons.AutoMirrored.Filled.Assignment,
                     modifier = Modifier.weight(1f)
                 )
                 ReportMetricCard(

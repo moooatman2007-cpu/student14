@@ -9,6 +9,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -259,5 +260,29 @@ fun MidarFullLogo(
                 textAlign = TextAlign.Center
             )
         }
+    }
+}
+
+/**
+ * Elegant, subtle MIDAR brand watermark for screen headers and backgrounds.
+ * Ultra-low opacity (3-5%) so it never distracts or interferes with content or readability.
+ */
+@Composable
+fun MidarWatermarkBackground(
+    modifier: Modifier = Modifier,
+    alpha: Float = 0.03f,
+    size: Dp = 220.dp
+) {
+    Box(
+        modifier = modifier
+            .size(size)
+            .alpha(alpha)
+    ) {
+        MidarLogoIcon(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(4.dp),
+            size = size
+        )
     }
 }

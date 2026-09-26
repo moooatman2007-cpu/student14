@@ -55,15 +55,18 @@ class RepositoryOutboxIntegrationTest {
         outboxDao = db.outboxDao()
 
         com.example.data.SupabaseClientProvider.mockTeacherId = "teacher_x"
+        com.example.data.local.DatabaseProvider.setDatabase(db, context)
 
         studentRepository = SupabaseStudentRepository(studentDao, outboxDao)
-        attendanceRepository = SupabaseAttendanceRepository(attendanceDao, outboxDao)
+        attendanceRepository = SupabaseAttendanceRepository(attendanceDao, outboxDao, studentDao)
         recitationRepository = SupabaseRecitationRepository(recitationDao, outboxDao)
     }
 
     @After
     fun tearDown() {
         db.close()
+        com.example.data.local.DatabaseProvider.resetForTesting()
+        com.example.data.SupabaseClientProvider.mockTeacherId = null
     }
 
     @Test

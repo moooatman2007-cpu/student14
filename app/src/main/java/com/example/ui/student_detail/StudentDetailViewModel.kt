@@ -241,7 +241,7 @@ class StudentDetailViewModel(
                     emptyList()
                 }
 
-                val dateFormat = SimpleDateFormat("d MMMM yyyy", Locale("ar"))
+                val dateFormat = SimpleDateFormat("d MMMM yyyy", Locale.forLanguageTag("ar"))
                 val formattedDate = dateFormat.format(Date(student.createdAt))
 
                 _uiState.update {

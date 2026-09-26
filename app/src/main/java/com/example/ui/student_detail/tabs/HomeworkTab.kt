@@ -14,8 +14,8 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Assignment
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Assignment
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
@@ -84,7 +84,7 @@ fun HomeworkTab(
                     modifier = Modifier.padding(Dimens.Spacing32)
                 ) {
                     Icon(
-                        imageVector = Icons.Default.Assignment,
+                        imageVector = Icons.AutoMirrored.Filled.Assignment,
                         contentDescription = null,
                         tint = MaterialTheme.colorScheme.primary,
                         modifier = Modifier.size(48.dp)

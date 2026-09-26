@@ -6,6 +6,8 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Assignment
+import androidx.compose.material.icons.automirrored.filled.ReceiptLong
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
@@ -386,10 +388,10 @@ fun StudentProfileInfoTab(
                 QuickActionButton(title = "تسجيل تسميع", icon = Icons.Default.History, color = PrimaryIndigo, onClick = onRecordRecitation, modifier = Modifier.weight(1f))
             }
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                QuickActionButton(title = "تسجيل واجب", icon = Icons.Default.Assignment, color = ElectricBlue, onClick = onRecordHomework, modifier = Modifier.weight(1f))
+                QuickActionButton(title = "تسجيل واجب", icon = Icons.AutoMirrored.Filled.Assignment, color = ElectricBlue, onClick = onRecordHomework, modifier = Modifier.weight(1f))
                 QuickActionButton(title = "تسجيل امتحان", icon = Icons.Default.Quiz, color = Color(0xFFF57F17), onClick = onRecordExam, modifier = Modifier.weight(1f))
             }
-            QuickActionButton(title = "فتح التقرير الشهري", icon = Icons.Default.ReceiptLong, color = MaterialTheme.colorScheme.onSurfaceVariant, onClick = { onSelectTab(StudentDetailTab.MONTHLY_REPORT) }, modifier = Modifier.fillMaxWidth())
+            QuickActionButton(title = "فتح التقرير الشهري", icon = Icons.AutoMirrored.Filled.ReceiptLong, color = MaterialTheme.colorScheme.onSurfaceVariant, onClick = { onSelectTab(StudentDetailTab.MONTHLY_REPORT) }, modifier = Modifier.fillMaxWidth())
         }
     }
 }

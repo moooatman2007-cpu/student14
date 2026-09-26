@@ -11,6 +11,38 @@ import kotlinx.serialization.json.Json
 
 object SupabaseClientProvider {
     var mockTeacherId: String? = null
+
+    val baseUrl: String by lazy {
+        val supabaseUrl = try {
+            BuildConfig.SUPABASE_URL
+        } catch (e: Exception) {
+            ""
+        }
+        if (supabaseUrl.isNotBlank() && !supabaseUrl.contains("placeholder")) {
+            supabaseUrl.trimEnd('/')
+        } else {
+            "https://placeholder.supabase.co"
+        }
+    }
+
+    fun getEdgeFunctionUrl(functionName: String): String {
+        val configuredUrl = try {
+            BuildConfig.SUPABASE_EDGE_FUNCTION_URL
+        } catch (e: Exception) {
+            ""
+        }
+        return if (configuredUrl.isNotBlank() && !configuredUrl.contains("placeholder")) {
+            val trimmed = configuredUrl.trimEnd('/')
+            if (trimmed.endsWith(functionName)) {
+                trimmed
+            } else {
+                "$trimmed/$functionName"
+            }
+        } else {
+            "$baseUrl/functions/v1/$functionName"
+        }
+    }
+
     val client: SupabaseClient by lazy {
         val supabaseUrl = try {
             BuildConfig.SUPABASE_URL

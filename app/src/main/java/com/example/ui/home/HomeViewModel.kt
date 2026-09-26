@@ -101,7 +101,7 @@ class HomeViewModel(
     }
 
     fun loadData() {
-        val dateFormat = SimpleDateFormat("EEEE، d MMMM yyyy", Locale("ar"))
+        val dateFormat = SimpleDateFormat("EEEE، d MMMM yyyy", Locale.forLanguageTag("ar"))
         val todayStr = dateFormat.format(Date())
 
         viewModelScope.launch {

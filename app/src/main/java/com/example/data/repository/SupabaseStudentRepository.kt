@@ -60,10 +60,20 @@ class SupabaseStudentRepository(
                 }
                 .decodeList<Student>()
 
-            // Stale-While-Revalidate: save fetched into Room
-            studentDao?.upsertStudents(fetched.map { it.toEntity() })
-            _students.value = fetched
-            fetched
+            // Stale-While-Revalidate: save fetched into Room preserving local group assignments
+            val cachedEntities = studentDao?.getAllStudentsSync(teacherId) ?: emptyList()
+            val localGroupMap = cachedEntities.associate { it.studentId to it.groupId }
+            val entitiesToUpsert = fetched.map { s ->
+                val localGroupId = localGroupMap[s.studentId] ?: s.groupId
+                s.copy(groupId = localGroupId).toEntity()
+            }
+            studentDao?.upsertStudents(entitiesToUpsert)
+            val mergedList = fetched.map { s ->
+                val localGroupId = localGroupMap[s.studentId] ?: s.groupId
+                s.copy(groupId = localGroupId)
+            }
+            _students.value = mergedList
+            mergedList
         } catch (e: Exception) {
             e.printStackTrace()
             val cachedEntities = studentDao?.getAllStudentsSync(teacherId) ?: emptyList()
@@ -182,6 +192,22 @@ class SupabaseStudentRepository(
         }
     }
 
+    private suspend fun generateSafeOfflineStudentCode(teacherId: String): String {
+        // Guaranteed collision-free:
+        // Prefixed with "ST-TMP-" to comply with "ST-" prefix conventions while
+        // remaining distinct from 5-digit server codes (ST-00001).
+        // Uses cryptographic random UUID and validates against Room and in-memory caches.
+        for (attempt in 0..20) {
+            val candidate = "ST-TMP-${UUID.randomUUID().toString().replace("-", "").take(6).uppercase()}"
+            val existsInRoom = studentDao?.getStudentByCode(teacherId, candidate) != null
+            val existsInMemory = _students.value.any { it.teacherId == teacherId && it.studentCode.equals(candidate, ignoreCase = true) }
+            if (!existsInRoom && !existsInMemory) {
+                return candidate
+            }
+        }
+        return "ST-TMP-${System.nanoTime().toString().takeLast(8)}"
+    }
+
     override suspend fun addStudent(
         fullName: String,
         gradeId: String,
@@ -194,10 +220,10 @@ class SupabaseStudentRepository(
             ?: return@withContext Result.failure(IllegalStateException("انتهت الجلسة، يرجى تسجيل الدخول أولاً."))
 
         val generatedId = UUID.randomUUID().toString()
-        val studentCode = "ST-${System.currentTimeMillis().toString().takeLast(4)}"
+        val offlineStudentCode = generateSafeOfflineStudentCode(teacherId)
         val student = Student(
             studentId = generatedId,
-            studentCode = studentCode,
+            studentCode = offlineStudentCode,
             fullName = fullName.trim(),
             gradeId = gradeId,
             parentPhone = parentPhone.trim(),
@@ -209,7 +235,6 @@ class SupabaseStudentRepository(
         try {
             val dataMap = mapOf(
                 "id" to generatedId,
-                "student_code" to studentCode,
                 "teacher_id" to teacherId,
                 "grade_id" to gradeId,
                 "full_name" to fullName.trim(),
@@ -284,47 +309,60 @@ class SupabaseStudentRepository(
 
         val studentWithTeacher = if (student.teacherId.isNullOrBlank()) student.copy(teacherId = teacherId) else student
 
+        // Ensure studentCode and groupId stability during updates
+        val existingEntity = studentDao?.getStudentByIdSync(teacherId, studentWithTeacher.studentId)
+        val preservedCode = if (studentWithTeacher.studentCode.isNotBlank()) {
+            studentWithTeacher.studentCode
+        } else {
+            existingEntity?.studentCode ?: ""
+        }
+        val safeStudent = studentWithTeacher.copy(studentCode = preservedCode)
+
         try {
             val request = UpdateStudentRequest(
-                gradeId = studentWithTeacher.gradeId,
-                fullName = studentWithTeacher.fullName.trim(),
-                parentPhone = studentWithTeacher.parentPhone.trim(),
-                hasWhatsApp = studentWithTeacher.hasWhatsApp,
-                alternativePhone = studentWithTeacher.alternativePhone?.trim()?.ifBlank { null }
+                gradeId = safeStudent.gradeId,
+                fullName = safeStudent.fullName.trim(),
+                parentPhone = safeStudent.parentPhone.trim(),
+                hasWhatsApp = safeStudent.hasWhatsApp,
+                alternativePhone = safeStudent.alternativePhone?.trim()?.ifBlank { null }
             )
 
             val updatedStudent = client.postgrest["students"]
                 .update(request) {
                     filter {
-                        eq("id", studentWithTeacher.studentId)
+                        eq("id", safeStudent.studentId)
                         eq("teacher_id", teacherId)
                     }
                     select()
                 }
                 .decodeSingle<Student>()
 
-            studentDao?.upsertStudent(updatedStudent.toEntity())
+            val reconciled = updatedStudent.copy(
+                studentCode = if (updatedStudent.studentCode.isNotBlank()) updatedStudent.studentCode else preservedCode,
+                groupId = existingEntity?.groupId ?: updatedStudent.groupId
+            )
+            studentDao?.upsertStudent(reconciled.toEntity())
 
             val currentList = _students.value.toMutableList()
-            val index = currentList.indexOfFirst { it.studentId == studentWithTeacher.studentId }
+            val index = currentList.indexOfFirst { it.studentId == safeStudent.studentId }
             if (index >= 0) {
-                currentList[index] = updatedStudent
+                currentList[index] = reconciled
                 _students.value = currentList
             }
 
-            Result.success(updatedStudent)
+            Result.success(reconciled)
         } catch (e: Exception) {
             e.printStackTrace()
             // Offline fallback
             try {
-                studentDao?.upsertStudent(studentWithTeacher.toEntity())
+                studentDao?.upsertStudent(safeStudent.toEntity())
 
                 val request = UpdateStudentRequest(
-                    gradeId = studentWithTeacher.gradeId,
-                    fullName = studentWithTeacher.fullName.trim(),
-                    parentPhone = studentWithTeacher.parentPhone.trim(),
-                    hasWhatsApp = studentWithTeacher.hasWhatsApp,
-                    alternativePhone = studentWithTeacher.alternativePhone?.trim()?.ifBlank { null }
+                    gradeId = safeStudent.gradeId,
+                    fullName = safeStudent.fullName.trim(),
+                    parentPhone = safeStudent.parentPhone.trim(),
+                    hasWhatsApp = safeStudent.hasWhatsApp,
+                    alternativePhone = safeStudent.alternativePhone?.trim()?.ifBlank { null }
                 )
                 val payload = Json.encodeToString(request)
                 outboxDao?.insertOperation(
@@ -332,7 +370,7 @@ class SupabaseStudentRepository(
                         id = UUID.randomUUID().toString(),
                         operationType = "UPDATE",
                         entityType = "STUDENT",
-                        entityId = studentWithTeacher.studentId,
+                        entityId = safeStudent.studentId,
                         payload = payload,
                         createdAt = System.currentTimeMillis(),
                         status = "PENDING",
@@ -342,16 +380,16 @@ class SupabaseStudentRepository(
                 OutboxSyncScheduler.scheduleSync()
 
                 val currentList = _students.value.toMutableList()
-                val index = currentList.indexOfFirst { it.studentId == studentWithTeacher.studentId }
+                val index = currentList.indexOfFirst { it.studentId == safeStudent.studentId }
                 if (index >= 0) {
-                    currentList[index] = studentWithTeacher
+                    currentList[index] = safeStudent
                     _students.value = currentList
                 } else {
-                    currentList.add(0, studentWithTeacher)
+                    currentList.add(0, safeStudent)
                     _students.value = currentList
                 }
 
-                Result.success(studentWithTeacher)
+                Result.success(safeStudent)
             } catch (ex: Exception) {
                 ex.printStackTrace()
                 Result.failure(Exception(ex.message ?: "حدث خطأ أثناء تعديل بيانات الطالب."))

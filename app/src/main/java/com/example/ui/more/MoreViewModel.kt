@@ -51,7 +51,8 @@ data class MoreUiState(
     val pairingPhoneNumber: String = "",
     val pairingCode: String? = null,
     val isRequestingPairingCode: Boolean = false,
-    val pairingCodeError: String? = null
+    val pairingCodeError: String? = null,
+    val isPairingCodeExpired: Boolean = false
 )
 
 class MoreViewModel(
@@ -60,7 +61,8 @@ class MoreViewModel(
     private val teacherRepository: TeacherRepository = RepositoryProvider.teacherRepository,
     private val okHttpClient: OkHttpClient = defaultOkHttpClient,
     private val ioDispatcher: kotlinx.coroutines.CoroutineDispatcher = Dispatchers.IO,
-    private val runInitialCheck: Boolean = true
+    private val runInitialCheck: Boolean = true,
+    edgeFunctionUrl: String? = null
 ) : ViewModel() {
 
     companion object {
@@ -77,27 +79,12 @@ class MoreViewModel(
     val uiState: StateFlow<MoreUiState> = _uiState.asStateFlow()
 
     private var pollingJob: Job? = null
+    // In-memory only reference to pairing code copied to clipboard (never logged/persisted)
+    private var lastCopiedPairingCode: String? = null
 
     private val wahaSessionUrl: String by lazy {
-        val configuredUrl = try {
-            com.example.BuildConfig.SUPABASE_EDGE_FUNCTION_URL
-        } catch (e: Exception) {
-            ""
-        }
-        if (configuredUrl.isNotBlank() && !configuredUrl.contains("placeholder")) {
-            configuredUrl
-        } else {
-            val baseUrl = try {
-                com.example.BuildConfig.SUPABASE_URL
-            } catch (e: Exception) {
-                ""
-            }
-            if (baseUrl.isNotBlank() && !baseUrl.contains("placeholder")) {
-                "$baseUrl/functions/v1/waha-session"
-            } else {
-                "https://oknpfsvmopdsgsfbbdcs.supabase.co/functions/v1/waha-session"
-            }
-        }
+        edgeFunctionUrl?.takeIf { it.isNotBlank() }
+            ?: SupabaseClientProvider.getEdgeFunctionUrl("waha-session")
     }
 
     init {
@@ -244,6 +231,15 @@ class MoreViewModel(
             _uiState.update { it.copy(isTestingWaha = true, wahaTestResult = null) }
             try {
                 val token = SupabaseClientProvider.client.auth.currentAccessTokenOrNull()
+                if (token.isNullOrBlank()) {
+                    _uiState.update {
+                        it.copy(
+                            isTestingWaha = false,
+                            wahaTestResult = "انتهت جلسة تسجيل الدخول. يرجى تسجيل الدخول مرة أخرى."
+                        )
+                    }
+                    return@launch
+                }
 
                 val jsonObject = JSONObject()
                 jsonObject.put("action", "TEST_WAHA_CONNECTION")
@@ -254,36 +250,99 @@ class MoreViewModel(
                 val requestBuilder = Request.Builder()
                     .url(wahaSessionUrl)
                     .post(requestBody)
+                    .header("Authorization", "Bearer $token")
 
-                if (!token.isNullOrBlank()) {
-                    requestBuilder.header("Authorization", "Bearer $token")
-                }
-
-                val response = withContext(Dispatchers.IO) {
+                val startTime = System.currentTimeMillis()
+                val response = withContext(ioDispatcher) {
                     okHttpClient.newCall(requestBuilder.build()).execute()
                 }
+                val latencyMs = System.currentTimeMillis() - startTime
 
                 response.use { res ->
+                    val code = res.code
                     val responseStr = res.body?.string() ?: ""
-                    val resJson = JSONObject(responseStr)
+                    android.util.Log.d("WahaTest", "Raw response: $responseStr (code: $code)")
 
-                    val reachable = resJson.optBoolean("reachable", false)
-                    val statusVal = if (resJson.has("status") && !resJson.isNull("status")) resJson.optInt("status") else null
-                    val latencyMs = resJson.optLong("latency_ms", 0)
-                    val success = resJson.optBoolean("success", false)
+                    var resJson: JSONObject? = null
+                    try {
+                        resJson = JSONObject(responseStr)
+                    } catch (_: Exception) {
+                        // JSON parsing failed
+                    }
 
-                    val statusText = statusVal?.toString() ?: "null"
-                    val resultText = "reachable: $reachable\nstatus: $statusText\nlatency_ms: ${latencyMs}ms\nsuccess: $success"
+                    val reachable = if (resJson != null) {
+                        resJson.optBoolean("reachable", true)
+                    } else {
+                        true
+                    }
+
+                    val statusVal = if (resJson != null && resJson.has("status") && !resJson.isNull("status")) {
+                        resJson.optInt("status")
+                    } else {
+                        code
+                    }
+
+                    val success = if (resJson != null && resJson.has("success")) {
+                        resJson.optBoolean("success", false)
+                    } else {
+                        res.isSuccessful
+                    }
+
+                    val jsonLatency = if (resJson != null && resJson.has("latency_ms")) {
+                        resJson.optLong("latency_ms", latencyMs)
+                    } else {
+                        latencyMs
+                    }
+
+                    val resultText = buildString {
+                        append("WhatsApp Server Connection Test\n\n")
+                        append("reachable: $reachable\n")
+                        append("status: $statusVal\n")
+                        append("latency_ms: ${jsonLatency}ms\n")
+                        append("success: $success")
+                    }
 
                     _uiState.update {
                         it.copy(isTestingWaha = false, wahaTestResult = resultText)
                     }
                 }
+            } catch (e: java.net.SocketTimeoutException) {
+                _uiState.update {
+                    it.copy(
+                        isTestingWaha = false,
+                        wahaTestResult = buildString {
+                            append("WhatsApp Server Connection Test\n\n")
+                            append("reachable: false\n")
+                            append("status: 0\n")
+                            append("latency_ms: 0ms\n")
+                            append("success: false")
+                        }
+                    )
+                }
+            } catch (e: java.io.IOException) {
+                _uiState.update {
+                    it.copy(
+                        isTestingWaha = false,
+                        wahaTestResult = buildString {
+                            append("WhatsApp Server Connection Test\n\n")
+                            append("reachable: false\n")
+                            append("status: 0\n")
+                            append("latency_ms: 0ms\n")
+                            append("success: false")
+                        }
+                    )
+                }
             } catch (e: Exception) {
                 _uiState.update {
                     it.copy(
                         isTestingWaha = false,
-                        wahaTestResult = "reachable: false\nstatus: null\nlatency_ms: 0ms\nsuccess: false"
+                        wahaTestResult = buildString {
+                            append("WhatsApp Server Connection Test\n\n")
+                            append("reachable: false\n")
+                            append("status: 0\n")
+                            append("latency_ms: 0ms\n")
+                            append("success: false")
+                        }
                     )
                 }
             }
@@ -340,7 +399,7 @@ class MoreViewModel(
                     requestBuilder.header("Authorization", "Bearer $token")
                 }
 
-                val response = withContext(Dispatchers.IO) {
+                val response = withContext(ioDispatcher) {
                     okHttpClient.newCall(requestBuilder.build()).execute()
                 }
 
@@ -426,9 +485,23 @@ class MoreViewModel(
                 if (currentStatus != "CONNECTED" && currentStatus != "WORKING") {
                     _uiState.update {
                         it.copy(
-                            pairingCodeError = "انتهت مهلة انتظار الربط. يرجى طلب كود جديد والمحاولة مرة أخرى."
+                            isPairingCodeExpired = true,
+                            pairingCodeError = "انتهت صلاحية الكود"
                         )
                     }
+                    stopWahaPolling()
+                }
+            }
+        }
+    }
+
+    fun checkStatusImmediately() {
+        viewModelScope.launch {
+            pollWahaStatus()
+            val currentStatus = _uiState.value.wahaSessionStatus
+            if (currentStatus != "CONNECTED" && currentStatus != "WORKING" && currentStatus != "FAILED") {
+                if (pollingJob?.isActive != true) {
+                    startWahaPolling()
                 }
             }
         }
@@ -438,6 +511,30 @@ class MoreViewModel(
         pollingJob?.cancel()
         pollingJob = null
         pollingAttemptCount = 0
+    }
+
+    fun recordPairingCodeCopied(code: String) {
+        lastCopiedPairingCode = code
+    }
+
+    fun shouldClearClipboard(currentClipText: String?): Boolean {
+        val target = lastCopiedPairingCode
+        if (!target.isNullOrBlank() && currentClipText == target) {
+            lastCopiedPairingCode = null
+            return true
+        }
+        return false
+    }
+
+    fun requestNewPairingCode() {
+        _uiState.update {
+            it.copy(
+                pairingCode = null,
+                isPairingCodeExpired = false,
+                pairingCodeError = null
+            )
+        }
+        requestPairingCode()
     }
 
     private suspend fun pollWahaStatus() {
@@ -512,7 +609,7 @@ class MoreViewModel(
                     requestBuilder.header("Authorization", "Bearer $token")
                 }
 
-                val response = withContext(Dispatchers.IO) {
+                val response = withContext(ioDispatcher) {
                     okHttpClient.newCall(requestBuilder.build()).execute()
                 }
 
@@ -596,7 +693,7 @@ class MoreViewModel(
                     requestBuilder.header("Authorization", "Bearer $token")
                 }
 
-                val response = withContext(Dispatchers.IO) {
+                val response = withContext(ioDispatcher) {
                     okHttpClient.newCall(requestBuilder.build()).execute()
                 }
 
@@ -630,10 +727,12 @@ class MoreViewModel(
                     }
 
                     val code = resJson.optString("code", "")
+                    lastCopiedPairingCode = code
                     _uiState.update {
                         it.copy(
                             isRequestingPairingCode = false,
                             pairingCode = code,
+                            isPairingCodeExpired = false,
                             wahaSessionStatus = "SCAN_QR_CODE"
                         )
                     }

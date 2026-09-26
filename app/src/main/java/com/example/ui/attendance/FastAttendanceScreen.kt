@@ -109,7 +109,7 @@ fun FastAttendanceScreen(
     val formattedDateArabic = remember(uiState.currentDate) {
         try {
             val parsed = java.time.LocalDate.parse(uiState.currentDate)
-            parsed.format(java.time.format.DateTimeFormatter.ofPattern("EEEE — d MMMM", java.util.Locale("ar")))
+            parsed.format(java.time.format.DateTimeFormatter.ofPattern("EEEE — d MMMM", java.util.Locale.forLanguageTag("ar")))
         } catch (_: Exception) {
             uiState.currentDate
         }

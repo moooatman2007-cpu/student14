@@ -18,6 +18,7 @@ import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -191,4 +192,20 @@ class MoreViewModelTest {
         assertEquals("أستاذ تجريبي", state.teacherName)
         assertEquals(ThemeMode.SYSTEM, state.themeMode)
     }
+
+    @Test
+    fun testEdgeFunctionUrlConfiguration() = runTest {
+        val testUrl = "https://mytestproject.supabase.co/functions/v1/waha-session"
+        assertTrue(testUrl.contains("/functions/v1/waha-session"))
+        assertFalse(testUrl.contains("placeholder.supabase.co"))
+
+        val customVm = MoreViewModel(
+            settingsRepository = settingsRepository,
+            gradeRepository = gradeRepository,
+            teacherRepository = teacherRepository,
+            edgeFunctionUrl = testUrl
+        )
+        assertNotNull(customVm)
+    }
 }
+

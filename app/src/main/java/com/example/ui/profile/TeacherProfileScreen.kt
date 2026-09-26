@@ -29,6 +29,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.MenuBook
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.ArrowDropUp
 import androidx.compose.material.icons.filled.Business
@@ -37,7 +38,6 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Email
 import androidx.compose.material.icons.filled.Lock
-import androidx.compose.material.icons.filled.MenuBook
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Phone
 import androidx.compose.material.icons.filled.School
@@ -413,7 +413,7 @@ fun TeacherProfileScreen(
                                     label = { Text("المادة التي تدرسها") },
                                     leadingIcon = {
                                         Icon(
-                                            imageVector = Icons.Default.MenuBook,
+                                            imageVector = Icons.AutoMirrored.Filled.MenuBook,
                                             contentDescription = null,
                                             tint = MaterialTheme.colorScheme.primary
                                         )

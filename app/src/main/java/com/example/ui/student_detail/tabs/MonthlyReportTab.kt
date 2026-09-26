@@ -16,9 +16,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
+import androidx.compose.material.icons.automirrored.filled.Assignment
 import androidx.compose.material.icons.filled.Assessment
 import androidx.compose.material.icons.filled.AutoStories
-import androidx.compose.material.icons.filled.Assignment
 import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.EditNote
@@ -240,7 +240,7 @@ fun MonthlyReportTab(
         // Pillar 3: Exams
         ReportPillarCard(
             title = "3. الامتحانات والتقييمات",
-            icon = Icons.Default.Assignment,
+            icon = Icons.AutoMirrored.Filled.Assignment,
             color = ElectricBlue,
             mainStat = "${String.format(Locale.ENGLISH, "%.1f", examSummary?.averagePercentage ?: 0f)}%",
             mainStatLabel = "متوسط الامتحانات",

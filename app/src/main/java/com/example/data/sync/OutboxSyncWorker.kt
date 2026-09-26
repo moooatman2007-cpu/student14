@@ -5,6 +5,7 @@ import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import com.example.core.model.InsertStudentRequest
 import com.example.core.model.SoftDeleteStudentRequest
+import com.example.core.model.Student
 import com.example.core.model.SupabaseGroupDayDto
 import com.example.core.model.SupabaseGroupDto
 import com.example.core.model.SupabaseRecitationDto
@@ -12,7 +13,9 @@ import com.example.core.model.UpdateStudentRequest
 import com.example.core.model.UpsertAttendanceRequest
 import com.example.data.SupabaseClientProvider
 import com.example.data.local.DatabaseProvider
+import com.example.data.local.dao.StudentDao
 import com.example.data.local.entity.OutboxEntity
+import com.example.data.local.mapper.toEntity
 import io.github.jan.supabase.auth.auth
 import io.github.jan.supabase.postgrest.postgrest
 import kotlinx.serialization.json.Json
@@ -24,10 +27,24 @@ class OutboxSyncWorker(
 
     private val db = try { DatabaseProvider.getDatabase(context) } catch (_: Exception) { null }
     private val outboxDao = db?.outboxDao()
+    private val studentDao = db?.studentDao()
     private val client = SupabaseClientProvider.client
 
     companion object {
         internal var operationProcessor: (suspend (OutboxEntity) -> Unit)? = null
+
+        suspend fun reconcileStudentInRoom(
+            studentDao: StudentDao?,
+            serverStudent: Student,
+            teacherId: String
+        ) {
+            if (studentDao == null) return
+            val existing = studentDao.getStudentByIdSync(teacherId, serverStudent.studentId)
+            val reconciled = serverStudent.copy(
+                groupId = existing?.groupId ?: serverStudent.groupId
+            )
+            studentDao.upsertStudent(reconciled.toEntity())
+        }
     }
 
     override suspend fun doWork(): Result {
@@ -126,24 +143,51 @@ class OutboxSyncWorker(
                 when (opType) {
                     "INSERT" -> {
                         val req = Json.decodeFromString<InsertStudentRequest>(op.payload)
+                        val targetTeacherId = op.teacherId ?: req.teacherId
                         val dataMap = mapOf(
                             "id" to entityId,
-                            "teacher_id" to req.teacherId,
+                            "teacher_id" to targetTeacherId,
                             "grade_id" to req.gradeId,
                             "full_name" to req.fullName,
                             "parent_phone" to req.parentPhone,
                             "has_whatsapp" to req.hasWhatsApp,
                             "alternative_phone" to req.alternativePhone
                         )
-                        client.postgrest["students"].upsert(dataMap)
+
+                        // Idempotent upsert on Supabase:
+                        // On first insert, server trigger generates official ST-XXXXX student_code.
+                        // On replay / retry, existing student row is updated without creating duplicates,
+                        // and trigger preserves original student_code.
+                        val response = client.postgrest["students"].upsert(dataMap) {
+                            select()
+                        }.decodeSingleOrNull<Student>()
+
+                        val reconciledStudent = response ?: try {
+                            client.postgrest["students"].select {
+                                filter {
+                                    eq("id", entityId)
+                                    eq("teacher_id", targetTeacherId)
+                                }
+                            }.decodeSingleOrNull<Student>()
+                        } catch (_: Exception) { null }
+
+                        if (reconciledStudent != null) {
+                            reconcileStudentInRoom(studentDao, reconciledStudent, targetTeacherId)
+                        }
                     }
                     "UPDATE" -> {
                         val req = Json.decodeFromString<UpdateStudentRequest>(op.payload)
-                        client.postgrest["students"].update(req) {
+                        val targetTeacherId = op.teacherId ?: ""
+                        val response = client.postgrest["students"].update(req) {
                             filter {
                                 eq("id", entityId)
-                                eq("teacher_id", op.teacherId ?: "")
+                                eq("teacher_id", targetTeacherId)
                             }
+                            select()
+                        }.decodeSingleOrNull<Student>()
+
+                        if (response != null) {
+                            reconcileStudentInRoom(studentDao, response, targetTeacherId)
                         }
                     }
                     "DELETE" -> {

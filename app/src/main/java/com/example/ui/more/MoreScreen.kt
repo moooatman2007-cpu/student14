@@ -24,10 +24,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ExitToApp
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
+import androidx.compose.material.icons.automirrored.filled.MenuBook
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.Groups
-import androidx.compose.material.icons.filled.MenuBook
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Person
@@ -44,6 +44,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
@@ -52,6 +53,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.input.KeyboardType
 import android.content.Context
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -79,6 +81,8 @@ import com.example.R
 import com.example.data.repository.ThemeMode
 import com.example.ui.theme.DarkNavyCard
 import com.example.ui.theme.Dimens
+import com.example.ui.theme.EmeraldGreen
+import com.example.ui.theme.EmeraldGreenLight
 import com.example.ui.theme.PrimaryIndigo
 
 @Composable
@@ -223,7 +227,7 @@ fun MoreScreen(
 
                         // 2. إدارة الصفوف
                         SettingMenuItem(
-                            icon = Icons.Default.MenuBook,
+                            icon = Icons.AutoMirrored.Filled.MenuBook,
                             title = "إدارة الصفوف",
                             subtitle = if (uiState.grades.isNotEmpty()) "الصفوف المسجلة (${uiState.grades.size})" else "إضافة صف أو تعديله",
                             iconBg = Color(0xFFEDE9FE),
@@ -621,6 +625,51 @@ fun MoreScreen(
 
         // WhatsApp Pairing Dialog
         if (uiState.showWahaPairingDialog) {
+            val context = LocalContext.current
+            val clipboardManager = remember { context.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager }
+
+            // Auto-copy pairing code whenever a new valid code is generated
+            LaunchedEffect(uiState.pairingCode) {
+                val code = uiState.pairingCode
+                if (!code.isNullOrBlank()) {
+                    try {
+                        val clip = android.content.ClipData.newPlainText("WhatsApp Pairing Code", code)
+                        clipboardManager.setPrimaryClip(clip)
+                        viewModel.recordPairingCodeCopied(code)
+                    } catch (_: Exception) {}
+                }
+            }
+
+            // Auto-clear clipboard on connection success ONLY if it still holds the pairing code MIDAR copied
+            LaunchedEffect(uiState.wahaSessionStatus) {
+                val status = uiState.wahaSessionStatus
+                if (status == "CONNECTED" || status == "WORKING") {
+                    try {
+                        if (clipboardManager.hasPrimaryClip()) {
+                            val clip = clipboardManager.primaryClip
+                            if (clip != null && clip.itemCount > 0) {
+                                val currentText = clip.getItemAt(0).text?.toString()
+                                if (viewModel.shouldClearClipboard(currentText)) {
+                                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
+                                        clipboardManager.clearPrimaryClip()
+                                    } else {
+                                        val emptyClip = android.content.ClipData.newPlainText("", "")
+                                        clipboardManager.setPrimaryClip(emptyClip)
+                                    }
+                                }
+                            }
+                        }
+                    } catch (_: Exception) {}
+                }
+            }
+
+            // Lifecycle check: when returning from WhatsApp to MIDAR, poll status immediately
+            androidx.lifecycle.compose.LifecycleEventEffect(androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+                if (uiState.showWahaPairingDialog && (uiState.wahaSessionStatus == "SCAN_QR_CODE" || uiState.pairingCode != null)) {
+                    viewModel.checkStatusImmediately()
+                }
+            }
+
             val qrBitmap = remember(uiState.wahaQrBase64) {
                 uiState.wahaQrBase64?.let { base64Str ->
                     try {
@@ -641,7 +690,7 @@ fun MoreScreen(
                 onDismissRequest = viewModel::closeWahaPairingDialog,
                 title = {
                     Text(
-                        text = "ربط حساب WhatsApp",
+                        text = "ربط WhatsApp",
                         style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
                         textAlign = TextAlign.Right,
                         modifier = Modifier.fillMaxWidth()
@@ -667,7 +716,7 @@ fun MoreScreen(
                                     textAlign = TextAlign.Center
                                 )
                             }
-                        } else if (uiState.wahaPairingError != null || uiState.pairingCodeError != null) {
+                        } else if (uiState.wahaPairingError != null || (uiState.pairingCodeError != null && uiState.pairingCode == null && !uiState.isPairingCodeExpired)) {
                             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                                 Icon(
                                     imageVector = Icons.Default.Info,
@@ -692,7 +741,7 @@ fun MoreScreen(
                                     shape = RoundedCornerShape(12.dp),
                                     modifier = Modifier.testTag("start_waha_button")
                                 ) {
-                                    Text("الحصول على كود جديد")
+                                    Text("المحاولة مرة أخرى")
                                 }
                             }
                         } else if (uiState.wahaSessionStatus == "CONNECTED" || uiState.wahaSessionStatus == "WORKING") {
@@ -716,7 +765,7 @@ fun MoreScreen(
                                 }
                                 Spacer(modifier = Modifier.height(Dimens.Spacing16))
                                 Text(
-                                    text = "تم ربط WhatsApp بنجاح ✓",
+                                    text = "WhatsApp متصل ✓",
                                     style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
                                     color = Color(0xFF16A34A),
                                     textAlign = TextAlign.Center
@@ -811,24 +860,6 @@ fun MoreScreen(
                                         textAlign = TextAlign.Center,
                                         modifier = Modifier.fillMaxWidth()
                                     )
-                                    
-                                    Button(
-                                        onClick = {
-                                            val intent = context.packageManager.getLaunchIntentForPackage("com.whatsapp")
-                                            if (intent != null) {
-                                                context.startActivity(intent)
-                                            } else {
-                                                Toast.makeText(context, "تطبيق واتساب غير مثبت على هذا الجهاز.", Toast.LENGTH_SHORT).show()
-                                            }
-                                        },
-                                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF25D366)),
-                                        shape = RoundedCornerShape(12.dp),
-                                        modifier = Modifier.fillMaxWidth()
-                                    ) {
-                                        Text("فتح WhatsApp")
-                                    }
-                                    
-                                    Spacer(modifier = Modifier.height(Dimens.Spacing8))
 
                                     if (qrBitmap != null) {
                                         Box(
@@ -884,7 +915,7 @@ fun MoreScreen(
                                 ) {
                                     if (uiState.pairingCode == null) {
                                         Text(
-                                            text = "أدخل رقم هاتف WhatsApp للحصول على كود الربط الفوري:",
+                                            text = "اربط WhatsApp بحساب MIDAR لإرسال التنبيهات للطلاب وأولياء الأمور.",
                                             style = MaterialTheme.typography.bodyMedium,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                                             textAlign = TextAlign.Right,
@@ -921,6 +952,7 @@ fun MoreScreen(
                                             shape = RoundedCornerShape(12.dp),
                                             modifier = Modifier
                                                 .fillMaxWidth()
+                                                .height(50.dp)
                                                 .testTag("request_code_button")
                                         ) {
                                             if (uiState.isRequestingPairingCode) {
@@ -933,36 +965,67 @@ fun MoreScreen(
                                                 Text("الحصول على كود الربط", fontWeight = FontWeight.Bold)
                                             }
                                         }
-                                    } else {
-                                        Text(
-                                            text = "أدخل الكود التالي في تطبيق WhatsApp على هاتفك:",
-                                            style = MaterialTheme.typography.bodyMedium,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                            textAlign = TextAlign.Center,
-                                            modifier = Modifier.fillMaxWidth()
-                                        )
-
-                                        // Big clear Pairing Code Display with easy Copy
-                                        val context = LocalContext.current
-                                        val clipboardManager = remember { context.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager }
-                                        
+                                    } else if (uiState.isPairingCodeExpired) {
+                                        // Expired state
                                         Card(
-                                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.2f)),
+                                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer),
                                             shape = RoundedCornerShape(16.dp),
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .clickable {
-                                                    val clip = android.content.ClipData.newPlainText("WhatsApp Pairing Code", uiState.pairingCode ?: "")
-                                                    clipboardManager.setPrimaryClip(clip)
-                                                    Toast.makeText(context, "تم نسخ الكود بنجاح ✓", Toast.LENGTH_SHORT).show()
-                                                }
+                                            modifier = Modifier.fillMaxWidth()
                                         ) {
                                             Column(
                                                 modifier = Modifier
                                                     .fillMaxWidth()
-                                                    .padding(vertical = Dimens.Spacing16, horizontal = Dimens.Spacing24),
+                                                    .padding(Dimens.Spacing16),
                                                 horizontalAlignment = Alignment.CenterHorizontally
                                             ) {
+                                                Text(
+                                                    text = "انتهت صلاحية الكود",
+                                                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                                                    color = MaterialTheme.colorScheme.onErrorContainer,
+                                                    textAlign = TextAlign.Center
+                                                )
+                                                Spacer(modifier = Modifier.height(Dimens.Spacing4))
+                                                Text(
+                                                    text = "يرجى إنشاء كود جديد والمحاولة مرة أخرى.",
+                                                    style = MaterialTheme.typography.bodySmall,
+                                                    color = MaterialTheme.colorScheme.onErrorContainer.copy(alpha = 0.8f),
+                                                    textAlign = TextAlign.Center
+                                                )
+                                            }
+                                        }
+
+                                        Spacer(modifier = Modifier.height(Dimens.Spacing8))
+
+                                        Button(
+                                            onClick = viewModel::requestNewPairingCode,
+                                            colors = ButtonDefaults.buttonColors(containerColor = PrimaryIndigo),
+                                            shape = RoundedCornerShape(12.dp),
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .height(50.dp)
+                                                .testTag("request_new_code_button")
+                                        ) {
+                                            Text("إنشاء كود جديد", fontWeight = FontWeight.Bold)
+                                        }
+                                    } else {
+                                        // Active Pairing Code Card
+                                        Card(
+                                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.25f)),
+                                            shape = RoundedCornerShape(16.dp),
+                                            modifier = Modifier.fillMaxWidth()
+                                        ) {
+                                            Column(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .padding(vertical = Dimens.Spacing16, horizontal = Dimens.Spacing20),
+                                                horizontalAlignment = Alignment.CenterHorizontally
+                                            ) {
+                                                Text(
+                                                    text = "كود الربط",
+                                                    style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                )
+                                                Spacer(modifier = Modifier.height(Dimens.Spacing8))
                                                 Text(
                                                     text = uiState.pairingCode ?: "",
                                                     style = MaterialTheme.typography.displaySmall.copy(
@@ -973,30 +1036,35 @@ fun MoreScreen(
                                                     textAlign = TextAlign.Center,
                                                     modifier = Modifier.testTag("pairing_code_display")
                                                 )
-                                                Spacer(modifier = Modifier.height(4.dp))
-                                                Row(
-                                                    verticalAlignment = Alignment.CenterVertically,
-                                                    horizontalArrangement = Arrangement.Center
+                                                Spacer(modifier = Modifier.height(Dimens.Spacing8))
+                                                Surface(
+                                                    shape = RoundedCornerShape(8.dp),
+                                                    color = EmeraldGreenLight
                                                 ) {
-                                                    Icon(
-                                                        imageVector = Icons.Default.Share,
-                                                        contentDescription = null,
-                                                        tint = PrimaryIndigo,
-                                                        modifier = Modifier.size(16.dp)
-                                                    )
-                                                    Spacer(modifier = Modifier.width(6.dp))
-                                                    Text(
-                                                        text = "اضغط لنسخ الكود",
-                                                        style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
-                                                        color = PrimaryIndigo
-                                                    )
+                                                    Row(
+                                                        verticalAlignment = Alignment.CenterVertically,
+                                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                                                    ) {
+                                                        Box(
+                                                            modifier = Modifier
+                                                                .size(6.dp)
+                                                                .clip(CircleShape)
+                                                                .background(EmeraldGreen)
+                                                        )
+                                                        Spacer(modifier = Modifier.width(6.dp))
+                                                        Text(
+                                                            text = "تم نسخ الكود تلقائيًا",
+                                                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                                                            color = Color(0xFF047857)
+                                                        )
+                                                    }
                                                 }
                                             }
                                         }
 
                                         Spacer(modifier = Modifier.height(Dimens.Spacing4))
 
-                                        // Short Clear Instructions matching User Request
+                                        // Concise Instructions
                                         Card(
                                             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)),
                                             shape = RoundedCornerShape(12.dp),
@@ -1007,16 +1075,9 @@ fun MoreScreen(
                                                 verticalArrangement = Arrangement.spacedBy(Dimens.Spacing4)
                                             ) {
                                                 Text(
-                                                    text = "بعد فتح WhatsApp:",
-                                                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
-                                                    color = MaterialTheme.colorScheme.onSurface,
-                                                    textAlign = TextAlign.Right,
-                                                    modifier = Modifier.fillMaxWidth()
-                                                )
-                                                Text(
-                                                    text = "الأجهزة المرتبطة ← ربط جهاز ← الربط برقم الهاتف ← أدخل الكود",
+                                                    text = "افتح WhatsApp ← الأجهزة المرتبطة ← ربط جهاز، ثم الصق الكود.",
                                                     style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
-                                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                    color = MaterialTheme.colorScheme.onSurface,
                                                     textAlign = TextAlign.Right,
                                                     lineHeight = 22.sp,
                                                     modifier = Modifier.fillMaxWidth()
@@ -1026,7 +1087,7 @@ fun MoreScreen(
 
                                         Spacer(modifier = Modifier.height(Dimens.Spacing4))
 
-                                        // Primary "Open WhatsApp" Button (Green WhatsApp Theme)
+                                        // Primary "Open WhatsApp" Button
                                         Button(
                                             onClick = {
                                                 val pm = context.packageManager
@@ -1035,7 +1096,7 @@ fun MoreScreen(
                                                 if (intent != null) {
                                                     context.startActivity(intent)
                                                 } else {
-                                                    Toast.makeText(context, "تطبيق WhatsApp غير مثبت على الجهاز", Toast.LENGTH_LONG).show()
+                                                    Toast.makeText(context, "WhatsApp غير مثبت على هذا الجهاز.", Toast.LENGTH_LONG).show()
                                                 }
                                             },
                                             colors = ButtonDefaults.buttonColors(
@@ -1048,31 +1109,39 @@ fun MoreScreen(
                                                 .height(50.dp)
                                                 .testTag("open_whatsapp_button")
                                         ) {
-                                            Row(
-                                                verticalAlignment = Alignment.CenterVertically,
-                                                horizontalArrangement = Arrangement.Center
-                                            ) {
-                                                Text(
-                                                    text = "فتح WhatsApp",
-                                                    style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Bold)
-                                                )
-                                            }
-                                        }
-
-                                        uiState.pairingCodeError?.let { errorText ->
                                             Text(
-                                                text = errorText,
-                                                style = MaterialTheme.typography.bodySmall,
-                                                color = MaterialTheme.colorScheme.error,
-                                                textAlign = TextAlign.Center,
-                                                modifier = Modifier.fillMaxWidth().padding(top = Dimens.Spacing4)
+                                                text = "فتح WhatsApp",
+                                                style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Bold)
                                             )
                                         }
 
+                                        // Secondary "Copy Code" Button
+                                        androidx.compose.material3.OutlinedButton(
+                                            onClick = {
+                                                val code = uiState.pairingCode ?: ""
+                                                val clip = android.content.ClipData.newPlainText("WhatsApp Pairing Code", code)
+                                                clipboardManager.setPrimaryClip(clip)
+                                                viewModel.recordPairingCodeCopied(code)
+                                                Toast.makeText(context, "تم نسخ الكود بنجاح ✓", Toast.LENGTH_SHORT).show()
+                                            },
+                                            shape = RoundedCornerShape(12.dp),
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .height(48.dp)
+                                                .testTag("copy_code_button")
+                                        ) {
+                                            Text(
+                                                text = "نسخ الكود",
+                                                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
+                                                color = PrimaryIndigo
+                                            )
+                                        }
+
+                                        // Polling Progress Indicator
                                         Row(
                                             verticalAlignment = Alignment.CenterVertically,
                                             horizontalArrangement = Arrangement.Center,
-                                            modifier = Modifier.fillMaxWidth().padding(top = Dimens.Spacing8)
+                                            modifier = Modifier.fillMaxWidth().padding(top = Dimens.Spacing4)
                                         ) {
                                             CircularProgressIndicator(
                                                 modifier = Modifier.size(16.dp),
@@ -1087,13 +1156,12 @@ fun MoreScreen(
                                             )
                                         }
 
+                                        // Action when needed: "إنشاء كود جديد"
                                         TextButton(
-                                            onClick = {
-                                                viewModel.openWahaPairingDialog()
-                                            },
+                                            onClick = viewModel::requestNewPairingCode,
                                             modifier = Modifier.testTag("request_new_code_button")
                                         ) {
-                                            Text("طلب كود جديد أو تغيير الرقم", style = MaterialTheme.typography.bodySmall, color = PrimaryIndigo)
+                                            Text("إنشاء كود جديد", style = MaterialTheme.typography.bodySmall, color = PrimaryIndigo)
                                         }
                                     }
                                 }
