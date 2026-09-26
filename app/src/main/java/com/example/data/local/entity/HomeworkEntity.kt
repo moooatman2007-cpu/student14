@@ -3,8 +3,15 @@ package com.example.data.local.entity
 import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.PrimaryKey
+import androidx.room.Index
 
-@Entity(tableName = "homework")
+@Entity(
+    tableName = "homework",
+    indices = [
+        Index(value = ["teacher_id", "student_id"], name = "index_homework_teacher_id_student_id"),
+        Index(value = ["teacher_id", "date"], name = "index_homework_teacher_id_date")
+    ]
+)
 data class HomeworkEntity(
     @PrimaryKey
     @ColumnInfo(name = "homework_id")

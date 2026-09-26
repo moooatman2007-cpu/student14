@@ -159,13 +159,15 @@ class MockAttendanceRepository : AttendanceRepository {
                     AttendanceStatus.EXCUSED -> excusedCount++
                 }
                 val existingIndex = updated.indexOfFirst { it.studentId == rec.studentId && it.date == date }
+                val existing = if (existingIndex >= 0) updated[existingIndex] else null
                 val item = Attendance(
-                    attendanceId = if (existingIndex >= 0) updated[existingIndex].attendanceId else "att_${rec.studentId}_$date",
+                    attendanceId = existing?.attendanceId ?: "att_${rec.studentId}_$date",
                     studentId = rec.studentId,
+                    groupId = existing?.groupId,
                     date = date,
                     status = status,
                     note = rec.note,
-                    createdAt = if (existingIndex >= 0) updated[existingIndex].createdAt else System.currentTimeMillis(),
+                    createdAt = existing?.createdAt ?: System.currentTimeMillis(),
                     updatedAt = System.currentTimeMillis()
                 )
                 if (existingIndex >= 0) {

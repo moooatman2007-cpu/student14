@@ -75,6 +75,7 @@ class HomeViewModel(
     private val recitationRepository: RecitationRepository = RepositoryProvider.recitationRepository,
     private val examRepository: ExamRepository = RepositoryProvider.examRepository,
     private val homeworkRepository: com.example.data.repository.HomeworkRepository = RepositoryProvider.homeworkRepository,
+    private val groupRepository: com.example.data.repository.GroupRepository = RepositoryProvider.groupRepository,
     private val teacherRepository: TeacherRepository = RepositoryProvider.teacherRepository,
     private val syncManager: SyncManager = RepositoryProvider.syncManager
 ) : ViewModel() {
@@ -121,6 +122,19 @@ class HomeViewModel(
             val recThisMonth = recitationRepository.getRecitationsCountThisMonth(currentYear, currentMonth)
             val exThisMonth = examRepository.getExamsCountThisMonth(currentYear, currentMonth)
 
+            val initialTeacherName = teacher?.fullName?.ifBlank { null } ?: teacher?.email ?: ""
+            _uiState.update {
+                it.copy(
+                    teacherName = initialTeacherName,
+                    avatarUrl = teacher?.avatarUrl,
+                    currentDate = todayStr,
+                    todayPresentCount = todayPresent,
+                    todayAbsentCount = todayAbsent,
+                    recitationsThisMonth = recThisMonth,
+                    examsThisMonth = exThisMonth
+                )
+            }
+
             // 4. Observe reactive streams continuously
             val firstFive = combine(
                 gradeRepository.getGrades(),
@@ -132,7 +146,7 @@ class HomeViewModel(
                 DataBundle1(liveGrades, stats, liveTeacher, students, attendance)
             }
 
-            val groupsFlow = if (teacher != null) RepositoryProvider.groupRepository.observeGroups(teacher.id) else kotlinx.coroutines.flow.flowOf(emptyList())
+            val groupsFlow = if (teacher != null) groupRepository.observeGroups(teacher.id) else kotlinx.coroutines.flow.flowOf(emptyList())
 
             val lastThree = combine(
                 recitationRepository.getAllRecitationsForTeacher(),

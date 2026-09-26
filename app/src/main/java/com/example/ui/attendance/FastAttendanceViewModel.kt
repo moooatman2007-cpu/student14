@@ -8,6 +8,7 @@ import com.example.core.model.Grade
 import com.example.core.model.LessonPayment
 import com.example.core.model.Student
 import com.example.BuildConfig
+import io.github.jan.supabase.auth.auth
 import com.example.data.repository.AttendanceRepository
 import com.example.data.repository.GradeRepository
 import com.example.data.repository.GroupRepository
@@ -106,15 +107,33 @@ class FastAttendanceViewModel(
         }
     }
 
-    fun setInitialGroupId(groupId: String?) {
+    fun setInitialGroupId(groupId: String?, initialGroupName: String? = null) {
         if (groupId.isNullOrBlank()) return
-        _uiState.update { it.copy(selectedGroupId = groupId) }
+        _uiState.update { 
+            it.copy(
+                selectedGroupId = groupId,
+                groupName = initialGroupName ?: it.groupName
+            ) 
+        }
         viewModelScope.launch {
             val teacher = teacherRepository.fetchCurrentTeacher()
-            if (teacher != null) {
-                val group = groupRepository.getGroupById(teacher.id, groupId)
+            val teacherId = teacher?.id 
+                ?: com.example.data.SupabaseClientProvider.mockTeacherId 
+                ?: try { com.example.data.SupabaseClientProvider.client.auth.currentUserOrNull()?.id } catch (_: Exception) { null }
+            
+            if (teacherId != null) {
+                val group = groupRepository.getGroupById(teacherId, groupId)
                 if (group != null) {
                     _uiState.update { it.copy(groupName = group.name) }
+                } else {
+                    _uiState.update {
+                        it.copy(
+                            errorMessage = "لا يمكن الوصول لهذه المجموعة: غير مصرح أو غير موجودة.",
+                            allStudentsInScope = emptyList(),
+                            filteredStudents = emptyList()
+                        )
+                    }
+                    return@launch
                 }
             }
             val currentGradeId = _uiState.value.selectedGradeId
@@ -278,6 +297,7 @@ class FastAttendanceViewModel(
     }
 
     fun onGradeSelected(gradeId: String?) {
+        if (_uiState.value.selectedGroupId != null) return // Lock scope to the selected group
         val currentGroupId = _uiState.value.selectedGroupId
         updateLookupMaps(allStudentsList, gradeId, currentGroupId)
 
@@ -327,6 +347,18 @@ class FastAttendanceViewModel(
         val foundGlobalStudent = studentCodeMap[code.lowercase()]
 
         if (foundGlobalStudent == null) {
+            updateScanFeedback(ScanFeedback(
+                student = null,
+                type = ScanResultType.NOT_FOUND,
+                rawCode = code
+            ))
+            return
+        }
+
+        // Verify teacher ownership
+        val authTeacherId = com.example.data.SupabaseClientProvider.mockTeacherId
+            ?: try { com.example.data.SupabaseClientProvider.client.auth.currentUserOrNull()?.id } catch (_: Exception) { null }
+        if (authTeacherId != null && !foundGlobalStudent.teacherId.isNullOrBlank() && foundGlobalStudent.teacherId != authTeacherId) {
             updateScanFeedback(ScanFeedback(
                 student = null,
                 type = ScanResultType.NOT_FOUND,
@@ -510,10 +542,10 @@ class FastAttendanceViewModel(
         val selectedGroupId = _uiState.value.selectedGroupId
         updateLookupMaps(activeStudents, selectedGradeId, selectedGroupId)
 
-        val actualScope = if (selectedGradeId != null) {
-            activeStudents.filter { it.gradeId == selectedGradeId }
-        } else {
-            scopeStudents.filter { it.deletedAt == null }
+        val actualScope = when {
+            selectedGroupId != null -> activeStudents.filter { it.groupId == selectedGroupId }
+            selectedGradeId != null -> activeStudents.filter { it.gradeId == selectedGradeId }
+            else -> scopeStudents.filter { it.deletedAt == null }
         }
 
         _uiState.update { state ->

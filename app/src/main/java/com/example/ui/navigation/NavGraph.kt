@@ -234,6 +234,11 @@ fun MainAppNavigation(
                         type = NavType.StringType
                         nullable = true
                         defaultValue = null
+                    },
+                    navArgument("groupName") {
+                        type = NavType.StringType
+                        nullable = true
+                        defaultValue = null
                     }
                 ),
                 enterTransition = {
@@ -251,9 +256,14 @@ fun MainAppNavigation(
             ) { backStackEntry ->
                 val gradeIdArg = backStackEntry.arguments?.getString("gradeId")
                 val groupIdArg = backStackEntry.arguments?.getString("groupId")
+                val rawGroupName = backStackEntry.arguments?.getString("groupName")
+                val groupNameArg = rawGroupName?.let {
+                    try { java.net.URLDecoder.decode(it, "UTF-8") } catch (_: Exception) { it }
+                }
                 FastAttendanceScreen(
                     gradeIdArg = gradeIdArg,
                     groupIdArg = groupIdArg,
+                    groupNameArg = groupNameArg,
                     onNavigateBack = { navController.popBackStack() }
                 )
             }
@@ -303,8 +313,8 @@ fun MainAppNavigation(
             composable(Screen.Groups.route) {
                 GroupsScreen(
                     onNavigateBack = { navController.popBackStack() },
-                    onStartAttendance = { groupId ->
-                        navController.navigate(Screen.FastAttendance.createRoute(null, groupId))
+                    onStartAttendance = { groupId, groupName ->
+                        navController.navigate(Screen.FastAttendance.createRoute(null, groupId, groupName))
                     }
                 )
             }

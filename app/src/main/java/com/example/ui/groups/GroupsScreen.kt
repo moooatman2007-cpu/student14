@@ -32,7 +32,7 @@ import com.example.ui.theme.*
 @Composable
 fun GroupsScreen(
     onNavigateBack: () -> Unit,
-    onStartAttendance: (String) -> Unit,
+    onStartAttendance: (String, String) -> Unit,
     viewModel: GroupsViewModel = viewModel(),
     modifier: Modifier = Modifier
 ) {
@@ -209,7 +209,7 @@ fun GroupsScreen(
                             gradeName = gradeName,
                             onEdit = { viewModel.openEditDialog(group) },
                             onToggleActive = { viewModel.toggleGroupActive(group) },
-                            onStartAttendance = { onStartAttendance(group.id) }
+                            onStartAttendance = { onStartAttendance(group.id, group.name) }
                         )
                     }
                 }
@@ -248,7 +248,7 @@ fun GroupCard(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Column {
+                Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = group.name,
                         style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
@@ -270,7 +270,7 @@ fun GroupCard(
                                     modifier = Modifier
                                         .background(PrimaryIndigo.copy(alpha = 0.1f), shape = RoundedCornerShape(4.dp))
                                         .padding(horizontal = 6.dp, vertical = 2.dp)
-                                ) {
+                                    ) {
                                     Text(
                                         text = day,
                                         color = PrimaryIndigo,
@@ -284,8 +284,26 @@ fun GroupCard(
                 }
                 
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Dimens.Spacing8)) {
-                    IconButton(onClick = onStartAttendance, modifier = Modifier.testTag("attendance_group_btn_${group.id}")) {
-                        Icon(imageVector = Icons.Default.CheckCircle, contentDescription = "تسجيل حضور", tint = EmeraldGreen)
+                    Button(
+                        onClick = onStartAttendance,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = EmeraldGreen,
+                            contentColor = Color.White
+                        ),
+                        shape = RoundedCornerShape(10.dp),
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                        modifier = Modifier.testTag("attendance_group_btn_${group.id}")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.CheckCircle,
+                            contentDescription = "حضور المجموعة",
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            text = "حضور المجموعة",
+                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold)
+                        )
                     }
                     IconButton(onClick = onEdit, modifier = Modifier.testTag("edit_group_btn_${group.id}")) {
                         Icon(imageVector = Icons.Default.Edit, contentDescription = "تعديل", tint = PrimaryIndigo)

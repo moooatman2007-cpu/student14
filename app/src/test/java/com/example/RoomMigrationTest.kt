@@ -294,7 +294,7 @@ class RoomMigrationTest {
 
         // Step 2: Open with Room V5 using MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, and MIGRATION_4_5
         val roomDb = Room.databaseBuilder(context, AppDatabase::class.java, testDbName)
-            .addMigrations(AppDatabase.MIGRATION_1_2, AppDatabase.MIGRATION_2_3, AppDatabase.MIGRATION_3_4, AppDatabase.MIGRATION_4_5)
+            .addMigrations(AppDatabase.MIGRATION_1_2, AppDatabase.MIGRATION_2_3, AppDatabase.MIGRATION_3_4, AppDatabase.MIGRATION_4_5, AppDatabase.MIGRATION_5_6, AppDatabase.MIGRATION_6_7)
             .build()
 
         // Verify V1 data is 100% preserved
@@ -348,7 +348,7 @@ class RoomMigrationTest {
         v1Db.close()
 
         val roomDb = Room.databaseBuilder(context, AppDatabase::class.java, testDbName)
-            .addMigrations(AppDatabase.MIGRATION_1_2, AppDatabase.MIGRATION_2_3, AppDatabase.MIGRATION_3_4, AppDatabase.MIGRATION_4_5)
+            .addMigrations(AppDatabase.MIGRATION_1_2, AppDatabase.MIGRATION_2_3, AppDatabase.MIGRATION_3_4, AppDatabase.MIGRATION_4_5, AppDatabase.MIGRATION_5_6, AppDatabase.MIGRATION_6_7)
             .build()
 
         // Trigger open
@@ -383,7 +383,7 @@ class RoomMigrationTest {
 
         // Step 2: Open with Room V5 using MIGRATION_3_4 and MIGRATION_4_5
         val roomDb = Room.databaseBuilder(context, AppDatabase::class.java, testDbName)
-            .addMigrations(AppDatabase.MIGRATION_3_4, AppDatabase.MIGRATION_4_5)
+            .addMigrations(AppDatabase.MIGRATION_3_4, AppDatabase.MIGRATION_4_5, AppDatabase.MIGRATION_5_6, AppDatabase.MIGRATION_6_7)
             .build()
 
         // Verify Student data is 100% preserved
@@ -573,7 +573,7 @@ class RoomMigrationTest {
 
         // Step 2: Open with Room V5 using MIGRATION_4_5
         val roomDb = Room.databaseBuilder(context, AppDatabase::class.java, testDbName)
-            .addMigrations(AppDatabase.MIGRATION_4_5)
+            .addMigrations(AppDatabase.MIGRATION_4_5, AppDatabase.MIGRATION_5_6, AppDatabase.MIGRATION_6_7)
             .build()
 
         // Step 3: Verify student data is completely preserved

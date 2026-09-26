@@ -20,6 +20,7 @@ import com.example.data.repository.AttendanceRepository
 import com.example.data.repository.ExamRepository
 import com.example.data.repository.GradeRepository
 import com.example.data.repository.HomeworkRepository
+import com.example.data.repository.GroupRepository
 import com.example.data.repository.MonthlyReportRepository
 import com.example.data.repository.PaymentRepository
 import com.example.data.repository.RecitationRepository
@@ -130,7 +131,8 @@ class StudentDetailViewModel(
     private val examRepository: ExamRepository = RepositoryProvider.examRepository,
     private val monthlyReportRepository: MonthlyReportRepository = RepositoryProvider.monthlyReportRepository,
     private val homeworkRepository: HomeworkRepository = RepositoryProvider.homeworkRepository,
-    private val paymentRepository: PaymentRepository = RepositoryProvider.paymentRepository
+    private val paymentRepository: PaymentRepository = RepositoryProvider.paymentRepository,
+    private val groupRepository: GroupRepository = RepositoryProvider.groupRepository
 ) : ViewModel() {
 
     private val studentIdArg: String? = savedStateHandle?.get<String>("studentId")
@@ -226,7 +228,7 @@ class StudentDetailViewModel(
                 val group = student.groupId?.let { groupId ->
                     try {
                         val teacherId = student.teacherId ?: ""
-                        RepositoryProvider.groupRepository.getGroupById(teacherId, groupId)
+                        groupRepository.getGroupById(teacherId, groupId)
                     } catch (_: Exception) {
                         null
                     }
@@ -234,7 +236,7 @@ class StudentDetailViewModel(
                 
                 // Fetch available groups
                 val availableGroups = try {
-                    RepositoryProvider.groupRepository.observeGroupsByGrade(student.teacherId ?: "", student.gradeId).first()
+                    groupRepository.observeGroupsByGrade(student.teacherId ?: "", student.gradeId).first()
                 } catch (_: Exception) {
                     emptyList()
                 }
@@ -910,7 +912,7 @@ class StudentDetailViewModel(
         
         viewModelScope.launch {
             _uiState.update { it.copy(isSaving = true) }
-            val result = RepositoryProvider.groupRepository.assignStudentToGroup(teacherId, studentId, groupId)
+            val result = groupRepository.assignStudentToGroup(teacherId, studentId, groupId)
             if (result.isSuccess) {
                 // Refresh student
                 loadStudent(studentId)

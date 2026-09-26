@@ -79,6 +79,7 @@ import com.example.ui.theme.PrimaryIndigoLight
 fun FastAttendanceScreen(
     gradeIdArg: String? = null,
     groupIdArg: String? = null,
+    groupNameArg: String? = null,
     onNavigateBack: () -> Unit,
     viewModel: FastAttendanceViewModel = viewModel(),
     modifier: Modifier = Modifier
@@ -86,9 +87,9 @@ fun FastAttendanceScreen(
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val context = LocalContext.current
 
-    LaunchedEffect(gradeIdArg, groupIdArg) {
+    LaunchedEffect(gradeIdArg, groupIdArg, groupNameArg) {
         if (!groupIdArg.isNullOrBlank()) {
-            viewModel.setInitialGroupId(groupIdArg)
+            viewModel.setInitialGroupId(groupIdArg, groupNameArg)
         } else if (!gradeIdArg.isNullOrBlank()) {
             viewModel.setInitialGradeId(gradeIdArg)
         }
@@ -105,18 +106,29 @@ fun FastAttendanceScreen(
         uiState.grades.associate { it.id to it.name }
     }
 
+    val formattedDateArabic = remember(uiState.currentDate) {
+        try {
+            val parsed = java.time.LocalDate.parse(uiState.currentDate)
+            parsed.format(java.time.format.DateTimeFormatter.ofPattern("EEEE — d MMMM", java.util.Locale("ar")))
+        } catch (_: Exception) {
+            uiState.currentDate
+        }
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
                 title = {
                     Column {
                         Text(
-                            text = uiState.groupName ?: (uiState.grades.find { it.id == uiState.selectedGradeId }?.name ?: "تسجيل الحضور السريع"),
+                            text = uiState.groupName ?: (uiState.grades.find { it.id == uiState.selectedGradeId }?.name ?: "تسجيل الحضور"),
                             style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
-                            color = MaterialTheme.colorScheme.onSurface
+                            color = MaterialTheme.colorScheme.onSurface,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
                         Text(
-                            text = "${uiState.currentDate} • ${uiState.allStudentsInScope.size} طالب",
+                            text = "$formattedDateArabic • ${uiState.allStudentsInScope.size} طالب",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -196,6 +208,41 @@ fun FastAttendanceScreen(
                 .fillMaxSize()
                 .padding(innerPadding)
         ) {
+            // Group Context Header
+            if (uiState.selectedGroupId != null) {
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = Dimens.Spacing16, vertical = Dimens.Spacing8),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(Dimens.Spacing16)
+                    ) {
+                        Text(
+                            text = uiState.groupName ?: "المجموعة",
+                            style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = formattedDateArabic,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            text = "${uiState.allStudentsInScope.size} طالب",
+                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                            color = PrimaryIndigo
+                        )
+                    }
+                }
+            }
+
             // Stats Preview Card
             val totalInScope = uiState.allStudentsInScope.size
             val presentCount = uiState.presentStudentIds.size
@@ -307,8 +354,8 @@ fun FastAttendanceScreen(
                 }
             }
 
-            // Grade Filter Chips
-            if (uiState.grades.isNotEmpty()) {
+            // Grade Filter Chips (only when not opened for a specific group)
+            if (uiState.selectedGroupId == null && uiState.grades.isNotEmpty()) {
                 LazyRow(
                     contentPadding = PaddingValues(horizontal = Dimens.Spacing16),
                     horizontalArrangement = Arrangement.spacedBy(Dimens.Spacing8),
@@ -503,7 +550,7 @@ fun FastAttendanceScreen(
                                             ScanResultType.SUCCESS_PRESENT -> "تم تسجيل الحضور ✓"
                                             ScanResultType.ALREADY_PRESENT -> "مسجل مسبقاً ✓"
                                             ScanResultType.NOT_FOUND -> "كود غير معروف ❌"
-                                            ScanResultType.WRONG_GROUP -> "الطالب غير موجود في هذه المجموعة ⚠️"
+                                            ScanResultType.WRONG_GROUP -> "الطالب غير موجود في هذه المجموعة."
                                         },
                                         style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
                                         color = colorScheme.first
@@ -656,8 +703,14 @@ fun FastAttendanceScreen(
             // Student List
             if (uiState.filteredStudents.isEmpty()) {
                 EmptyStateView(
-                    title = if (uiState.searchQuery.isNotEmpty()) "لا يوجد طالب يطابق البحث" else "لا يوجد طلاب في المجموعة المحددة",
-                    description = "اكتب اسم الطالب لاختياره للحضور فورًا",
+                    title = if (uiState.searchQuery.isNotEmpty()) {
+                        "لا يوجد طالب يطابق البحث"
+                    } else if (uiState.selectedGroupId != null) {
+                        "لا يوجد طلاب في هذه المجموعة."
+                    } else {
+                        "لا يوجد طلاب في المجموعة المحددة"
+                    },
+                    description = if (uiState.selectedGroupId != null && uiState.searchQuery.isEmpty()) "" else "اكتب اسم الطالب لاختياره للحضور فورًا",
                     buttonText = null
                 )
             } else {

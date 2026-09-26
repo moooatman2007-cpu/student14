@@ -25,8 +25,11 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
 
 @OptIn(ExperimentalCoroutinesApi::class)
+@RunWith(RobolectricTestRunner::class)
 class ReportsAndStatisticsAuditTest {
 
     private val testDispatcher = StandardTestDispatcher()
@@ -36,6 +39,8 @@ class ReportsAndStatisticsAuditTest {
     private lateinit var recitationRepository: MockRecitationRepository
     private lateinit var examRepository: MockExamRepository
     private lateinit var monthlyReportRepository: MockMonthlyReportRepository
+    private lateinit var groupRepository: com.example.data.repository.MockGroupRepository
+    private lateinit var teacherRepository: com.example.data.repository.MockTeacherRepository
 
     @Before
     fun setup() {
@@ -45,6 +50,8 @@ class ReportsAndStatisticsAuditTest {
         attendanceRepository = MockAttendanceRepository()
         recitationRepository = MockRecitationRepository()
         examRepository = MockExamRepository()
+        groupRepository = com.example.data.repository.MockGroupRepository()
+        teacherRepository = com.example.data.repository.MockTeacherRepository()
         monthlyReportRepository = MockMonthlyReportRepository(
             studentRepository = studentRepository,
             gradeRepository = gradeRepository,
@@ -89,7 +96,9 @@ class ReportsAndStatisticsAuditTest {
             attendanceRepository = attendanceRepository,
             recitationRepository = recitationRepository,
             examRepository = examRepository,
-            homeworkRepository = com.example.data.repository.MockHomeworkRepository()
+            homeworkRepository = com.example.data.repository.MockHomeworkRepository(),
+            groupRepository = groupRepository,
+            teacherRepository = teacherRepository
         )
         testDispatcher.scheduler.advanceUntilIdle()
         reportsViewModel.selectTab(com.example.ui.reports.ReportsTab.STUDENT)
@@ -168,7 +177,9 @@ class ReportsAndStatisticsAuditTest {
             attendanceRepository = attendanceRepository,
             recitationRepository = recitationRepository,
             examRepository = examRepository,
-            homeworkRepository = com.example.data.repository.MockHomeworkRepository()
+            homeworkRepository = com.example.data.repository.MockHomeworkRepository(),
+            groupRepository = groupRepository,
+            teacherRepository = teacherRepository
         )
         testDispatcher.scheduler.advanceUntilIdle()
 

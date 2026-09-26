@@ -296,7 +296,9 @@ class F03DataIntegrityTest {
         val fakeRepo = FakeDelayStudentRepository()
         val addEditViewModel = AddEditStudentViewModel(
             studentRepository = fakeRepo,
-            gradeRepository = MockGradeRepository()
+            gradeRepository = MockGradeRepository(),
+            teacherRepository = MockTeacherRepository(),
+            groupRepository = MockGroupRepository()
         )
 
         addEditViewModel.onFullNameChange("Double Tapper")

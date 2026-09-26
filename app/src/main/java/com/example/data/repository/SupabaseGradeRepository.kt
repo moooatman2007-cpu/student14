@@ -122,7 +122,11 @@ class SupabaseGradeRepository(
         } catch (e: Exception) {
             e.printStackTrace()
             // In case of network failure / offline mode, load from Room cache!
-            val cachedEntities = gradeDao?.getAllGradesSync(teacherId) ?: emptyList()
+            val cachedEntities = try {
+                gradeDao?.getAllGradesSync(teacherId) ?: emptyList()
+            } catch (_: Exception) {
+                emptyList()
+            }
             val cached = if (cachedEntities.isNotEmpty()) {
                 cachedEntities.map { it.toDomain() }
             } else {

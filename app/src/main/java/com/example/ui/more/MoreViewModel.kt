@@ -78,6 +78,28 @@ class MoreViewModel(
 
     private var pollingJob: Job? = null
 
+    private val wahaSessionUrl: String by lazy {
+        val configuredUrl = try {
+            com.example.BuildConfig.SUPABASE_EDGE_FUNCTION_URL
+        } catch (e: Exception) {
+            ""
+        }
+        if (configuredUrl.isNotBlank() && !configuredUrl.contains("placeholder")) {
+            configuredUrl
+        } else {
+            val baseUrl = try {
+                com.example.BuildConfig.SUPABASE_URL
+            } catch (e: Exception) {
+                ""
+            }
+            if (baseUrl.isNotBlank() && !baseUrl.contains("placeholder")) {
+                "$baseUrl/functions/v1/waha-session"
+            } else {
+                "https://oknpfsvmopdsgsfbbdcs.supabase.co/functions/v1/waha-session"
+            }
+        }
+    }
+
     init {
         loadData()
     }
@@ -120,7 +142,7 @@ class MoreViewModel(
             val requestBody = jsonObject.toString().toRequestBody("application/json; charset=utf-8".toMediaTypeOrNull())
 
             val requestBuilder = Request.Builder()
-                .url("https://oknpfsvmopdsgsfbbdcs.supabase.co/functions/v1/waha-session")
+                .url(wahaSessionUrl)
                 .post(requestBody)
             if (!token.isNullOrBlank()) requestBuilder.header("Authorization", "Bearer $token")
 
@@ -230,7 +252,7 @@ class MoreViewModel(
                 val requestBody = bodyString.toRequestBody("application/json; charset=utf-8".toMediaTypeOrNull())
 
                 val requestBuilder = Request.Builder()
-                    .url("https://oknpfsvmopdsgsfbbdcs.supabase.co/functions/v1/waha-session")
+                    .url(wahaSessionUrl)
                     .post(requestBody)
 
                 if (!token.isNullOrBlank()) {
@@ -311,7 +333,7 @@ class MoreViewModel(
                 val requestBody = bodyString.toRequestBody("application/json; charset=utf-8".toMediaTypeOrNull())
 
                 val requestBuilder = Request.Builder()
-                    .url("https://oknpfsvmopdsgsfbbdcs.supabase.co/functions/v1/waha-session")
+                    .url(wahaSessionUrl)
                     .post(requestBody)
 
                 if (!token.isNullOrBlank()) {
@@ -429,7 +451,7 @@ class MoreViewModel(
             val requestBody = bodyString.toRequestBody("application/json; charset=utf-8".toMediaTypeOrNull())
 
             val requestBuilder = Request.Builder()
-                .url("https://oknpfsvmopdsgsfbbdcs.supabase.co/functions/v1/waha-session")
+                .url(wahaSessionUrl)
                 .post(requestBody)
 
             if (!token.isNullOrBlank()) {
@@ -483,7 +505,7 @@ class MoreViewModel(
                 val requestBody = bodyString.toRequestBody("application/json; charset=utf-8".toMediaTypeOrNull())
 
                 val requestBuilder = Request.Builder()
-                    .url("https://oknpfsvmopdsgsfbbdcs.supabase.co/functions/v1/waha-session")
+                    .url(wahaSessionUrl)
                     .post(requestBody)
 
                 if (!token.isNullOrBlank()) {
@@ -567,7 +589,7 @@ class MoreViewModel(
                 val requestBody = bodyString.toRequestBody("application/json; charset=utf-8".toMediaTypeOrNull())
 
                 val requestBuilder = Request.Builder()
-                    .url("https://oknpfsvmopdsgsfbbdcs.supabase.co/functions/v1/waha-session")
+                    .url(wahaSessionUrl)
                     .post(requestBody)
 
                 if (!token.isNullOrBlank()) {

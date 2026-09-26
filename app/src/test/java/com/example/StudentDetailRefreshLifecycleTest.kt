@@ -49,6 +49,7 @@ class StudentDetailRefreshLifecycleTest {
     private lateinit var homeworkRepository: MockHomeworkRepository
     private lateinit var paymentRepository: MockPaymentRepository
     private lateinit var monthlyReportRepository: MockMonthlyReportRepository
+    private lateinit var groupRepository: com.example.data.repository.MockGroupRepository
 
     @Before
     fun setup() {
@@ -60,6 +61,7 @@ class StudentDetailRefreshLifecycleTest {
         examRepository = MockExamRepository()
         homeworkRepository = MockHomeworkRepository()
         paymentRepository = MockPaymentRepository()
+        groupRepository = com.example.data.repository.MockGroupRepository()
         monthlyReportRepository = MockMonthlyReportRepository(
             studentRepository = studentRepository,
             gradeRepository = gradeRepository,
@@ -92,7 +94,8 @@ class StudentDetailRefreshLifecycleTest {
             examRepository = examRepository,
             monthlyReportRepository = monthlyReportRepository,
             homeworkRepository = homeworkRepository,
-            paymentRepository = paymentRepository
+            paymentRepository = paymentRepository,
+            groupRepository = groupRepository
         )
 
         testDispatcher.scheduler.advanceUntilIdle()
@@ -118,7 +121,8 @@ class StudentDetailRefreshLifecycleTest {
             examRepository = examRepository,
             monthlyReportRepository = monthlyReportRepository,
             homeworkRepository = homeworkRepository,
-            paymentRepository = paymentRepository
+            paymentRepository = paymentRepository,
+            groupRepository = groupRepository
         )
         testDispatcher.scheduler.advanceUntilIdle()
 
@@ -158,7 +162,8 @@ class StudentDetailRefreshLifecycleTest {
             examRepository = examRepository,
             monthlyReportRepository = monthlyReportRepository,
             homeworkRepository = homeworkRepository,
-            paymentRepository = paymentRepository
+            paymentRepository = paymentRepository,
+            groupRepository = groupRepository
         )
 
         // Load student 1 then immediately switch to student 2
@@ -187,7 +192,8 @@ class StudentDetailRefreshLifecycleTest {
             examRepository = examRepository,
             monthlyReportRepository = monthlyReportRepository,
             homeworkRepository = homeworkRepository,
-            paymentRepository = paymentRepository
+            paymentRepository = paymentRepository,
+            groupRepository = groupRepository
         )
         testDispatcher.scheduler.advanceUntilIdle()
 

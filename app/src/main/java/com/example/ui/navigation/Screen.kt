@@ -33,14 +33,16 @@ sealed class Screen(val route: String) {
     data object StudentDetail : Screen("student_detail/{studentId}") {
         fun createRoute(studentId: String): String = "student_detail/$studentId"
     }
-    data object FastAttendance : Screen("fast_attendance?gradeId={gradeId}&groupId={groupId}") {
-        fun createRoute(gradeId: String? = null, groupId: String? = null): String {
-            return when {
-                gradeId != null && groupId != null -> "fast_attendance?gradeId=$gradeId&groupId=$groupId"
-                gradeId != null -> "fast_attendance?gradeId=$gradeId"
-                groupId != null -> "fast_attendance?groupId=$groupId"
-                else -> "fast_attendance"
+    data object FastAttendance : Screen("fast_attendance?gradeId={gradeId}&groupId={groupId}&groupName={groupName}") {
+        fun createRoute(gradeId: String? = null, groupId: String? = null, groupName: String? = null): String {
+            val params = mutableListOf<String>()
+            if (gradeId != null) params.add("gradeId=$gradeId")
+            if (groupId != null) params.add("groupId=$groupId")
+            if (groupName != null) {
+                val encodedName = java.net.URLEncoder.encode(groupName, "UTF-8")
+                params.add("groupName=$encodedName")
             }
+            return if (params.isEmpty()) "fast_attendance" else "fast_attendance?" + params.joinToString("&")
         }
     }
     data object StudentBarcodes : Screen("student_barcodes")

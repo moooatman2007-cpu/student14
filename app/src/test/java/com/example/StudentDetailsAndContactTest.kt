@@ -11,6 +11,7 @@ import com.example.data.repository.HomeworkRepository
 import com.example.data.repository.MockAttendanceRepository
 import com.example.data.repository.MockExamRepository
 import com.example.data.repository.MockGradeRepository
+import com.example.data.repository.MockGroupRepository
 import com.example.data.repository.MockMonthlyReportRepository
 import com.example.data.repository.MockPaymentRepository
 import com.example.data.repository.MockRecitationRepository
@@ -113,7 +114,8 @@ class StudentDetailsAndContactTest {
             examRepository = examRepo,
             monthlyReportRepository = monthlyReportRepo,
             homeworkRepository = fakeHomeworkRepo,
-            paymentRepository = customPaymentRepo
+            paymentRepository = customPaymentRepo,
+            groupRepository = MockGroupRepository()
         )
     }
 

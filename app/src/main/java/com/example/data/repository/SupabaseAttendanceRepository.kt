@@ -377,41 +377,43 @@ class SupabaseAttendanceRepository(
             e.printStackTrace()
             // Offline fallback
             try {
-                val attendance = Attendance(
-                    attendanceId = "${studentId}_${date}",
-                    studentId = studentId,
-                    teacherId = teacherId,
-                    groupId = studentGroupId,
-                    date = date,
-                    status = status,
-                    note = note
-                )
-                attendanceDao?.upsertSingleAttendance(attendance.toEntity())
-
-                val upsertDto = UpsertAttendanceRequest(
-                    teacherId = teacherId,
-                    studentId = studentId,
-                    groupId = studentGroupId,
-                    date = date,
-                    status = status.name,
-                    note = note?.ifBlank { null }
-                )
-                val payload = Json.encodeToString(upsertDto)
-                outboxDao?.insertOperation(
-                    OutboxEntity(
-                        id = UUID.randomUUID().toString(),
-                        operationType = "UPSERT",
-                        entityType = "ATTENDANCE",
-                        entityId = "${studentId}_${date}",
-                        payload = payload,
-                        createdAt = System.currentTimeMillis(),
-                        status = "PENDING",
-                        teacherId = teacherId
+                kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
+                    val attendance = Attendance(
+                        attendanceId = "${studentId}_${date}",
+                        studentId = studentId,
+                        teacherId = teacherId,
+                        groupId = studentGroupId,
+                        date = date,
+                        status = status,
+                        note = note
                     )
-                )
-                OutboxSyncScheduler.scheduleSync()
+                    attendanceDao?.upsertSingleAttendance(attendance.toEntity())
 
-                Result.success(attendance)
+                    val upsertDto = UpsertAttendanceRequest(
+                        teacherId = teacherId,
+                        studentId = studentId,
+                        groupId = studentGroupId,
+                        date = date,
+                        status = status.name,
+                        note = note?.ifBlank { null }
+                    )
+                    val payload = Json.encodeToString(upsertDto)
+                    outboxDao?.insertOperation(
+                        OutboxEntity(
+                            id = UUID.randomUUID().toString(),
+                            operationType = "UPSERT",
+                            entityType = "ATTENDANCE",
+                            entityId = "${studentId}_${date}",
+                            payload = payload,
+                            createdAt = System.currentTimeMillis(),
+                            status = "PENDING",
+                            teacherId = teacherId
+                        )
+                    )
+                    OutboxSyncScheduler.scheduleSync()
+
+                    Result.success(attendance)
+                }
             } catch (ex: Exception) {
                 ex.printStackTrace()
                 Result.failure(Exception("فشل في حفظ سجل الحضور: ${ex.message}"))
@@ -457,12 +459,15 @@ class SupabaseAttendanceRepository(
             ).decodeSingle<BatchAttendanceResultDto>()
 
             try {
+                val studentEntitiesMap = studentDao?.getAllStudentsSync(teacherId)?.associateBy { it.studentId } ?: emptyMap()
                 val entities = records.map { item ->
                     val statusEnum = try { AttendanceStatus.valueOf(item.status) } catch(_: Exception) { AttendanceStatus.PRESENT }
+                    val studentGroupId = studentEntitiesMap[item.studentId]?.groupId
                     Attendance(
                         attendanceId = "${item.studentId}_${date}",
                         studentId = item.studentId,
                         teacherId = teacherId,
+                        groupId = studentGroupId,
                         date = date,
                         status = statusEnum,
                         note = item.note
@@ -486,6 +491,7 @@ class SupabaseAttendanceRepository(
                 val entities = ArrayList<AttendanceEntity>(records.size)
                 val outboxOps = ArrayList<OutboxEntity>(records.size)
                 val now = System.currentTimeMillis()
+                val studentEntitiesMap = studentDao?.getAllStudentsSync(teacherId)?.associateBy { it.studentId } ?: emptyMap()
 
                 for (record in records) {
                     val statusEnum = try { AttendanceStatus.valueOf(record.status) } catch(_: Exception) { AttendanceStatus.PRESENT }
@@ -496,11 +502,13 @@ class SupabaseAttendanceRepository(
                         AttendanceStatus.EXCUSED -> excusedCount++
                     }
 
+                    val studentGroupId = studentEntitiesMap[record.studentId]?.groupId
                     val attendanceId = "${record.studentId}_${date}"
                     val attendance = Attendance(
                         attendanceId = attendanceId,
                         studentId = record.studentId,
                         teacherId = teacherId,
+                        groupId = studentGroupId,
                         date = date,
                         status = statusEnum,
                         note = record.note
@@ -510,6 +518,7 @@ class SupabaseAttendanceRepository(
                     val upsertDto = UpsertAttendanceRequest(
                         teacherId = teacherId,
                         studentId = record.studentId,
+                        groupId = studentGroupId,
                         date = date,
                         status = statusEnum.name,
                         note = record.note?.ifBlank { null }

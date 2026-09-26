@@ -4,10 +4,14 @@ import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.core.model.Grade
+import com.example.core.model.Group
 import com.example.core.model.Student
 import com.example.data.repository.GradeRepository
+import com.example.data.repository.GroupRepository
 import com.example.data.repository.RepositoryProvider
 import com.example.data.repository.StudentRepository
+import com.example.data.repository.TeacherRepository
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -16,7 +20,6 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.Job
 
 data class AddEditStudentUiState(
     val isEditMode: Boolean = false,
@@ -31,7 +34,7 @@ data class AddEditStudentUiState(
     val hasWhatsApp: Boolean = true,
     val alternativePhone: String = "",
     val grades: List<Grade> = emptyList(),
-    val groups: List<com.example.core.model.Group> = emptyList(),
+    val groups: List<Group> = emptyList(),
     val selectedGroupId: String? = null,
     val isSaving: Boolean = false,
     val createdStudent: Student? = null,
@@ -47,7 +50,8 @@ class AddEditStudentViewModel(
     savedStateHandle: SavedStateHandle? = null,
     private val studentRepository: StudentRepository = RepositoryProvider.studentRepository,
     private val gradeRepository: GradeRepository = RepositoryProvider.gradeRepository,
-    private val teacherRepository: com.example.data.repository.TeacherRepository = RepositoryProvider.teacherRepository
+    private val teacherRepository: TeacherRepository = RepositoryProvider.teacherRepository,
+    private val groupRepository: GroupRepository = RepositoryProvider.groupRepository
 ) : ViewModel() {
 
     private val studentIdArg: String? = savedStateHandle?.get<String>("studentId")
@@ -67,13 +71,14 @@ class AddEditStudentViewModel(
 
     private var previousStageGrade: Grade? = null
     private var groupsObserveJob: Job? = null
+    private var initialStudentGroupId: String? = null
 
     init {
         loadGrades()
         if (studentIdArg != null) {
             loadExistingStudent(studentIdArg)
-        } else if (gradeIdArg != null) {
-            loadGroups(gradeIdArg)
+        } else if (!gradeIdArg.isNullOrBlank()) {
+            loadGroups(gradeIdArg, null)
         }
     }
 
@@ -90,7 +95,7 @@ class AddEditStudentViewModel(
                         current.selectedGradeId
                     }
                     if (nextGradeId.isNotBlank() && current.selectedGradeId != nextGradeId) {
-                        loadGroups(nextGradeId)
+                        loadGroups(nextGradeId, current.selectedGroupId)
                     }
                     current.copy(
                         grades = combinedGrades,
@@ -101,15 +106,31 @@ class AddEditStudentViewModel(
         }
     }
 
-    private fun loadGroups(gradeId: String) {
+    fun loadGroups(gradeId: String, currentAssignedGroupId: String? = _uiState.value.selectedGroupId) {
         groupsObserveJob?.cancel()
+        if (gradeId.isBlank()) {
+            _uiState.update { it.copy(groups = emptyList(), selectedGroupId = null) }
+            return
+        }
+
         groupsObserveJob = viewModelScope.launch {
-            val teacher = teacherRepository.fetchCurrentTeacher() ?: return@launch
-            RepositoryProvider.groupRepository.observeGroupsByGrade(teacher.id, gradeId).collect { groupsList ->
+            val teacher = teacherRepository.fetchCurrentTeacher()
+            val teacherId = teacher?.id ?: com.example.data.SupabaseClientProvider.mockTeacherId ?: ""
+            if (teacherId.isBlank()) return@launch
+
+            groupRepository.observeGroupsByGrade(teacherId, gradeId).collect { groupsList ->
+                // Filter: Active groups for this grade, PLUS if currentAssignedGroupId is in groupsList (even if inactive), include it
+                val eligibleGroups = groupsList.filter { group ->
+                    group.active || (group.id == currentAssignedGroupId)
+                }
+
                 _uiState.update { current ->
+                    val isSelectedStillValid = eligibleGroups.any { it.id == current.selectedGroupId }
+                    val updatedGroupId = if (isSelectedStillValid) current.selectedGroupId else null
+
                     current.copy(
-                        groups = groupsList,
-                        selectedGroupId = if (groupsList.any { it.id == current.selectedGroupId }) current.selectedGroupId else null
+                        groups = eligibleGroups,
+                        selectedGroupId = updatedGroupId
                     )
                 }
             }
@@ -120,12 +141,11 @@ class AddEditStudentViewModel(
         viewModelScope.launch {
             val student = studentRepository.getStudentById(studentId)
             if (student != null) {
-                // Fetch the student's grade directly to ensure it is available even if from a previous stage
+                initialStudentGroupId = student.groupId
                 val existingGrade = gradeRepository.getGradeById(student.gradeId)
                 if (existingGrade != null) {
                     val isAlreadyInCurrentGrades = _uiState.value.grades.any { it.id == existingGrade.id }
                     if (!isAlreadyInCurrentGrades) {
-                        // Mark as previous stage only in UI display
                         previousStageGrade = existingGrade.copy(name = "${existingGrade.name} — مرحلة سابقة")
                     }
                 }
@@ -143,7 +163,7 @@ class AddEditStudentViewModel(
                         grades = combinedGrades
                     )
                 }
-                loadGroups(student.gradeId)
+                loadGroups(student.gradeId, student.groupId)
             }
         }
     }
@@ -164,13 +184,16 @@ class AddEditStudentViewModel(
     }
 
     fun onGradeSelected(gradeId: String) {
+        if (_uiState.value.selectedGradeId == gradeId) return
+
         _uiState.update {
             it.copy(
                 selectedGradeId = gradeId,
+                selectedGroupId = null,
                 gradeError = null
             )
         }
-        loadGroups(gradeId)
+        loadGroups(gradeId, null)
     }
 
     fun onGroupSelected(groupId: String?) {
@@ -236,12 +259,23 @@ class AddEditStudentViewModel(
             return
         }
 
-        // Set isSaving synchronously to block subsequent clicks immediately!
+        // Set isSaving synchronously to block subsequent clicks immediately
         _uiState.update { it.copy(isSaving = true) }
 
         viewModelScope.launch {
             val teacher = teacherRepository.fetchCurrentTeacher()
             val tId = teacher?.id ?: ""
+
+            // Validation: Group must belong to current teacher and match selected gradeId
+            if (state.selectedGroupId != null) {
+                val group = groupRepository.getGroupById(tId, state.selectedGroupId)
+                if (group == null || group.teacherId != tId || group.gradeId != state.selectedGradeId) {
+                    _uiState.update { it.copy(isSaving = false) }
+                    _events.emit(AddEditStudentEvent.ShowError("المجموعة غير متوافقة مع الصف الدراسي."))
+                    return@launch
+                }
+            }
+
             if (state.isEditMode && state.studentId != null) {
                 val updatedStudent = Student(
                     studentId = state.studentId,
@@ -250,11 +284,13 @@ class AddEditStudentViewModel(
                     gradeId = state.selectedGradeId,
                     parentPhone = state.parentPhone,
                     hasWhatsApp = state.hasWhatsApp,
-                    alternativePhone = state.alternativePhone.ifBlank { null }
+                    alternativePhone = state.alternativePhone.ifBlank { null },
+                    teacherId = tId,
+                    groupId = state.selectedGroupId
                 )
                 val result = studentRepository.updateStudent(updatedStudent)
                 if (result.isSuccess) {
-                    RepositoryProvider.groupRepository.assignStudentToGroup(tId, state.studentId, state.selectedGroupId)
+                    groupRepository.assignStudentToGroup(tId, state.studentId, state.selectedGroupId)
                     _uiState.update { it.copy(isSaving = false) }
                     _events.emit(AddEditStudentEvent.StudentUpdated)
                 } else {
@@ -272,13 +308,13 @@ class AddEditStudentViewModel(
                 )
                 if (result.isSuccess) {
                     val newStudent = result.getOrNull()
-                    if (newStudent != null) {
-                        RepositoryProvider.groupRepository.assignStudentToGroup(tId, newStudent.studentId, state.selectedGroupId)
+                    if (newStudent != null && state.selectedGroupId != null) {
+                        groupRepository.assignStudentToGroup(tId, newStudent.studentId, state.selectedGroupId)
                     }
                     _uiState.update { current ->
                         current.copy(
                             isSaving = false,
-                            createdStudent = newStudent,
+                            createdStudent = if (state.selectedGroupId != null && newStudent != null) newStudent.copy(groupId = state.selectedGroupId) else newStudent,
                             showSuccessDialog = true
                         )
                     }
@@ -306,6 +342,8 @@ class AddEditStudentViewModel(
                 hasWhatsApp = true,
                 alternativePhone = "",
                 grades = current.grades,
+                groups = current.groups,
+                selectedGroupId = null,
                 isSaving = false,
                 createdStudent = null,
                 showSuccessDialog = false

@@ -24,6 +24,15 @@ class SupabaseTeacherRepository : TeacherRepository {
     override fun getCurrentTeacher(): Flow<Teacher?> = _currentTeacher.asStateFlow()
 
     override suspend fun fetchCurrentTeacher(): Teacher? = withContext(Dispatchers.IO) {
+        val mockId = SupabaseClientProvider.mockTeacherId
+        if (mockId != null) {
+            val cached = _currentTeacher.value
+            if (cached != null && cached.id == mockId) return@withContext cached
+            val mockTeacher = Teacher(id = mockId, email = "mock@teacher.com", fullName = "المدرس الحالي")
+            _currentTeacher.value = mockTeacher
+            return@withContext mockTeacher
+        }
+
         try {
             val user = client.auth.currentUserOrNull() ?: return@withContext null
             val teacherId = user.id

@@ -212,7 +212,14 @@ class CountOptimizationAuditTest {
             attendanceRepository = attendanceRepository,
             recitationRepository = recitationRepository,
             examRepository = examRepository,
-            teacherRepository = teacherRepository
+            homeworkRepository = com.example.data.repository.MockHomeworkRepository(),
+            groupRepository = com.example.data.repository.MockGroupRepository(),
+            teacherRepository = teacherRepository,
+            syncManager = object : com.example.data.sync.SyncManager {
+                override val syncStatus: kotlinx.coroutines.flow.StateFlow<com.example.data.sync.SyncStatus> = 
+                    kotlinx.coroutines.flow.MutableStateFlow(com.example.data.sync.SyncStatus())
+                override fun retrySync() {}
+            }
         )
 
         testDispatcher.scheduler.advanceUntilIdle()

@@ -2,6 +2,8 @@ package com.example
 
 import com.example.data.repository.MockGradeRepository
 import com.example.data.repository.MockStudentRepository
+import com.example.data.repository.MockTeacherRepository
+import com.example.data.repository.MockGroupRepository
 import com.example.ui.add_edit_student.AddEditStudentViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -16,13 +18,18 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
 
 @OptIn(ExperimentalCoroutinesApi::class)
+@RunWith(RobolectricTestRunner::class)
 class AddStudentSuccessFlowTest {
 
     private val testDispatcher = StandardTestDispatcher()
     private lateinit var studentRepository: MockStudentRepository
     private lateinit var gradeRepository: MockGradeRepository
+    private lateinit var teacherRepository: MockTeacherRepository
+    private lateinit var groupRepository: MockGroupRepository
     private lateinit var viewModel: AddEditStudentViewModel
 
     @Before
@@ -30,9 +37,13 @@ class AddStudentSuccessFlowTest {
         Dispatchers.setMain(testDispatcher)
         studentRepository = MockStudentRepository()
         gradeRepository = MockGradeRepository()
+        teacherRepository = MockTeacherRepository()
+        groupRepository = MockGroupRepository()
         viewModel = AddEditStudentViewModel(
             studentRepository = studentRepository,
-            gradeRepository = gradeRepository
+            gradeRepository = gradeRepository,
+            teacherRepository = teacherRepository,
+            groupRepository = groupRepository
         )
     }
 
