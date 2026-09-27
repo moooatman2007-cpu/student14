@@ -49,6 +49,7 @@ class SupabaseHomeworkRepository(
                 .decodeList<SupabaseHomeworkDto>()
                 .map { it.toHomework(teacherId) }
 
+            if (!com.example.data.auth.AccountSessionManager.isSessionActive(teacherId)) return
             homeworkDao?.upsertHomeworkList(list.map { it.toEntity() })
         } catch (e: Exception) {
             e.printStackTrace()
@@ -69,6 +70,7 @@ class SupabaseHomeworkRepository(
                 .decodeList<SupabaseHomeworkDto>()
                 .map { it.toHomework(teacherId) }
 
+            if (!com.example.data.auth.AccountSessionManager.isSessionActive(teacherId)) return
             homeworkDao?.upsertHomeworkList(list.map { it.toEntity() })
         } catch (e: Exception) {
             e.printStackTrace()
@@ -221,7 +223,9 @@ class SupabaseHomeworkRepository(
                 .decodeSingle<SupabaseHomeworkDto>()
             
             val homework = inserted.toHomework(teacherId)
-            homeworkDao?.upsertSingleHomework(homework.toEntity())
+            if (com.example.data.auth.AccountSessionManager.isSessionActive(teacherId)) {
+                homeworkDao?.upsertSingleHomework(homework.toEntity())
+            }
             Result.success(homework)
         } catch (e: Exception) {
             e.printStackTrace()
@@ -275,7 +279,9 @@ class SupabaseHomeworkRepository(
             }.decodeSingle<SupabaseHomeworkDto>()
 
             val result = updated.toHomework(teacherId)
-            homeworkDao?.upsertSingleHomework(result.toEntity())
+            if (com.example.data.auth.AccountSessionManager.isSessionActive(teacherId)) {
+                homeworkDao?.upsertSingleHomework(result.toEntity())
+            }
             Result.success(result)
         } catch (e: Exception) {
             e.printStackTrace()
@@ -376,7 +382,7 @@ class SupabaseHomeworkRepository(
                 .decodeSingleOrNull<SupabaseHomeworkDto>()
             
             val homework = dto?.toHomework(teacherId)
-            if (homework != null) {
+            if (homework != null && com.example.data.auth.AccountSessionManager.isSessionActive(teacherId)) {
                 homeworkDao?.upsertSingleHomework(homework.toEntity())
             }
             homework

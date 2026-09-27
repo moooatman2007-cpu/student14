@@ -114,7 +114,10 @@ class SupabaseGradeRepository(
                 normalized.sortedBy { it.displayOrder }
             }
 
-            // Save fetched grades into Room Cache
+            // Save fetched grades into Room Cache if session is still active
+            if (!com.example.data.auth.AccountSessionManager.isSessionActive(teacherId)) {
+                return@withContext emptyList()
+            }
             gradeDao?.upsertGrades(stageGrades.map { it.toEntity() })
 
             _grades.value = stageGrades
@@ -197,7 +200,9 @@ class SupabaseGradeRepository(
                 .sortedBy { it.displayOrder }
                 .map { if (it.teacherId == null) it.copy(teacherId = teacherId) else it }
 
-            gradeDao?.upsertGrades(filtered.map { it.toEntity() })
+            if (com.example.data.auth.AccountSessionManager.isSessionActive(teacherId)) {
+                gradeDao?.upsertGrades(filtered.map { it.toEntity() })
+            }
 
             _grades.value = filtered
             filtered
@@ -256,7 +261,9 @@ class SupabaseGradeRepository(
                 .decodeSingleOrNull<Grade>()
 
             if (fetched != null) {
-                gradeDao?.upsertGrade(fetched.copy(teacherId = teacherId).toEntity())
+                if (com.example.data.auth.AccountSessionManager.isSessionActive(teacherId)) {
+                    gradeDao?.upsertGrade(fetched.copy(teacherId = teacherId).toEntity())
+                }
             }
             fetched
         } catch (e: Exception) {

@@ -48,6 +48,7 @@ class SupabaseExamRepository(
                 .decodeList<SupabaseExamDto>()
                 .map { it.toExam(teacherId = teacherId) }
 
+            if (!com.example.data.auth.AccountSessionManager.isSessionActive(teacherId)) return
             examDao?.upsertExams(list.map { it.toEntity() })
         } catch (e: Exception) {
             e.printStackTrace()
@@ -71,6 +72,7 @@ class SupabaseExamRepository(
                 .decodeList<SupabaseExamDto>()
                 .map { it.toExam(teacherId = teacherId) }
 
+            if (!com.example.data.auth.AccountSessionManager.isSessionActive(teacherId)) return
             examDao?.upsertExams(list.map { it.toEntity() })
         } catch (e: Exception) {
             e.printStackTrace()
@@ -192,7 +194,9 @@ class SupabaseExamRepository(
                 .decodeList<SupabaseExamDto>()
                 .map { it.toExam(teacherId = teacherId) }
 
-            examDao?.upsertExams(list.map { it.toEntity() })
+            if (com.example.data.auth.AccountSessionManager.isSessionActive(teacherId)) {
+                examDao?.upsertExams(list.map { it.toEntity() })
+            }
 
             if (list.isEmpty()) return@withContext ExamSummary()
 
@@ -280,7 +284,9 @@ class SupabaseExamRepository(
                             .decodeList<SupabaseExamDto>()
                             .map { it.toExam(teacherId = teacherId) }
 
-                        examDao.upsertExams(list.map { it.toEntity() })
+                        if (com.example.data.auth.AccountSessionManager.isSessionActive(teacherId)) {
+                            examDao.upsertExams(list.map { it.toEntity() })
+                        }
                     } catch (e: Exception) {
                         e.printStackTrace()
                     }
@@ -350,7 +356,9 @@ class SupabaseExamRepository(
                 .decodeSingle<SupabaseExamDto>()
 
             val exam = inserted.toExam(teacherId = teacherId)
-            examDao?.upsertSingleExam(exam.toEntity())
+            if (com.example.data.auth.AccountSessionManager.isSessionActive(teacherId)) {
+                examDao?.upsertSingleExam(exam.toEntity())
+            }
 
             Result.success(exam)
         } catch (e: Exception) {
@@ -414,7 +422,9 @@ class SupabaseExamRepository(
             }.decodeSingle<SupabaseExamDto>()
 
             val result = updated.toExam(teacherId = teacherId)
-            examDao?.upsertSingleExam(result.toEntity())
+            if (com.example.data.auth.AccountSessionManager.isSessionActive(teacherId)) {
+                examDao?.upsertSingleExam(result.toEntity())
+            }
 
             Result.success(result)
         } catch (e: Exception) {
@@ -521,7 +531,7 @@ class SupabaseExamRepository(
                 .decodeSingleOrNull<SupabaseExamDto>()
 
             val exam = dto?.toExam(teacherId = teacherId)
-            if (exam != null) {
+            if (exam != null && com.example.data.auth.AccountSessionManager.isSessionActive(teacherId)) {
                 examDao?.upsertSingleExam(exam.toEntity())
             }
             exam

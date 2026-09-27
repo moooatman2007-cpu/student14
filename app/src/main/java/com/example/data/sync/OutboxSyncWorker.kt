@@ -1,5 +1,7 @@
 package com.example.data.sync
 
+import android.util.Log
+
 import android.content.Context
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
@@ -38,11 +40,12 @@ class OutboxSyncWorker(
             serverStudent: Student,
             teacherId: String
         ) {
-            if (studentDao == null) return
+            if (studentDao == null || !com.example.data.auth.AccountSessionManager.isSessionActive(teacherId)) return
             val existing = studentDao.getStudentByIdSync(teacherId, serverStudent.studentId)
             val reconciled = serverStudent.copy(
                 groupId = existing?.groupId ?: serverStudent.groupId
             )
+            if (!com.example.data.auth.AccountSessionManager.isSessionActive(teacherId)) return
             studentDao.upsertStudent(reconciled.toEntity())
         }
     }
@@ -57,7 +60,7 @@ class OutboxSyncWorker(
         }
 
         val teacherId = SupabaseClientProvider.mockTeacherId ?: user?.id
-        if (teacherId == null) {
+        if (teacherId == null || !com.example.data.auth.AccountSessionManager.isSessionActive(teacherId)) {
             return Result.success()
         }
 
@@ -74,6 +77,10 @@ class OutboxSyncWorker(
         var shouldRetryDueToTransientFailure = false
 
         for (op in operations) {
+            if (isStopped || !com.example.data.auth.AccountSessionManager.isSessionActive(teacherId)) {
+                return Result.success()
+            }
+
             // Skip operations that have already failed permanently or reached max retry threshold
             if (op.status == "FAILED" || op.retryCount >= 5) {
                 continue
@@ -142,6 +149,7 @@ class OutboxSyncWorker(
             "STUDENT" -> {
                 when (opType) {
                     "INSERT" -> {
+                        Log.d("SyncDiag", "WORKER INSERT START: entityId=$entityId, opId=${op.id}")
                         val req = Json.decodeFromString<InsertStudentRequest>(op.payload)
                         val targetTeacherId = op.teacherId ?: req.teacherId
                         val dataMap = mapOf(

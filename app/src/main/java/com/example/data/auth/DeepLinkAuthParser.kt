@@ -27,9 +27,20 @@ object DeepLinkAuthParser {
             return DeepLinkAuthResult.Ignored
         }
 
-        // 1. Check for error or error_description query params
-        val error = uri.getQueryParameter("error")
-        val errorDescription = uri.getQueryParameter("error_description")
+        // 1. Check for error or error_description query params or fragment
+        var error = uri.getQueryParameter("error")
+        var errorDescription = uri.getQueryParameter("error_description")
+
+        val fragment = uri.fragment
+        if (error.isNullOrBlank() && errorDescription.isNullOrBlank() && !fragment.isNullOrBlank()) {
+            val fragmentParams = fragment.split("&").associate {
+                val parts = it.split("=", limit = 2)
+                if (parts.size == 2) parts[0] to Uri.decode(parts[1]) else parts[0] to ""
+            }
+            error = fragmentParams["error"]
+            errorDescription = fragmentParams["error_description"]
+        }
+
         if (!error.isNullOrBlank() || !errorDescription.isNullOrBlank()) {
             val description = errorDescription ?: error ?: "فشل التحقق من الرابط"
             return DeepLinkAuthResult.AuthError(
@@ -55,7 +66,6 @@ object DeepLinkAuthParser {
         }
 
         // 4. Check for implicit fragment (#access_token=...&refresh_token=...)
-        val fragment = uri.fragment
         if (!fragment.isNullOrBlank() && fragment.contains("access_token")) {
             return DeepLinkAuthResult.FragmentSession(fragment = fragment)
         }

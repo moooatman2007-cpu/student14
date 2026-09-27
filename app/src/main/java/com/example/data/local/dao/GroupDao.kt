@@ -29,4 +29,7 @@ interface GroupDao {
 
     @Delete
     suspend fun deleteGroup(group: GroupEntity)
+
+    @Query("DELETE FROM groups WHERE teacher_id = :teacherId")
+    suspend fun deleteGroupsByTeacher(teacherId: String)
 }

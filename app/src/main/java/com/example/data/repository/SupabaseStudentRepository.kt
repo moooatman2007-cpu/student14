@@ -1,5 +1,7 @@
 package com.example.data.repository
 
+import android.util.Log
+
 import com.example.core.model.InsertStudentRequest
 import com.example.core.model.SoftDeleteStudentRequest
 import com.example.core.model.Student
@@ -59,6 +61,11 @@ class SupabaseStudentRepository(
                     order("created_at", order = Order.DESCENDING)
                 }
                 .decodeList<Student>()
+
+            // If session was terminated during network fetch, discard result immediately to prevent stale data re-injection
+            if (!com.example.data.auth.AccountSessionManager.isSessionActive(teacherId)) {
+                return@withContext emptyList()
+            }
 
             // Stale-While-Revalidate: save fetched into Room preserving local group assignments
             val cachedEntities = studentDao?.getAllStudentsSync(teacherId) ?: emptyList()
@@ -153,7 +160,7 @@ class SupabaseStudentRepository(
                 }
                 .decodeSingleOrNull<Student>()
 
-            if (student != null) {
+            if (student != null && com.example.data.auth.AccountSessionManager.isSessionActive(teacherId)) {
                 studentDao?.upsertStudent(student.toEntity())
             }
             student
@@ -182,7 +189,7 @@ class SupabaseStudentRepository(
                 }
                 .decodeSingleOrNull<Student>()
 
-            if (student != null) {
+            if (student != null && com.example.data.auth.AccountSessionManager.isSessionActive(teacherId)) {
                 studentDao?.upsertStudent(student.toEntity())
             }
             student
@@ -215,6 +222,7 @@ class SupabaseStudentRepository(
         hasWhatsApp: Boolean,
         alternativePhone: String?
     ): Result<Student> = withContext(Dispatchers.IO) {
+        Log.d("SyncDiag", "REPO ADD START: fullName=${fullName}, gradeId=${gradeId}")
         val user = client.auth.currentUserOrNull()
         val teacherId = SupabaseClientProvider.mockTeacherId ?: user?.id
             ?: return@withContext Result.failure(IllegalStateException("انتهت الجلسة، يرجى تسجيل الدخول أولاً."))
@@ -249,7 +257,9 @@ class SupabaseStudentRepository(
                 }
                 .decodeSingle<Student>()
 
-            studentDao?.upsertStudent(insertedStudent.toEntity())
+            if (com.example.data.auth.AccountSessionManager.isSessionActive(teacherId)) {
+                studentDao?.upsertStudent(insertedStudent.toEntity())
+            }
 
             val currentList = _students.value.toMutableList()
             currentList.add(0, insertedStudent)
@@ -294,6 +304,8 @@ class SupabaseStudentRepository(
                 currentList.add(0, student)
                 _students.value = currentList
 
+                
+        Log.d("SyncDiag", "REPO ADD SUCCESS: id=${student.studentId}")
                 Result.success(student)
             } catch (ex: Exception) {
                 ex.printStackTrace()
@@ -303,6 +315,7 @@ class SupabaseStudentRepository(
     }
 
     override suspend fun updateStudent(student: Student): Result<Student> = withContext(Dispatchers.IO) {
+        Log.d("SyncDiag", "REPO UPDATE START: id=${student.studentId}, fullName=${student.fullName}")
         val user = client.auth.currentUserOrNull()
         val teacherId = SupabaseClientProvider.mockTeacherId ?: user?.id
             ?: return@withContext Result.failure(IllegalStateException("انتهت الجلسة، يرجى تسجيل الدخول أولاً."))
@@ -341,7 +354,9 @@ class SupabaseStudentRepository(
                 studentCode = if (updatedStudent.studentCode.isNotBlank()) updatedStudent.studentCode else preservedCode,
                 groupId = existingEntity?.groupId ?: updatedStudent.groupId
             )
-            studentDao?.upsertStudent(reconciled.toEntity())
+            if (com.example.data.auth.AccountSessionManager.isSessionActive(teacherId)) {
+                studentDao?.upsertStudent(reconciled.toEntity())
+            }
 
             val currentList = _students.value.toMutableList()
             val index = currentList.indexOfFirst { it.studentId == safeStudent.studentId }
@@ -350,7 +365,9 @@ class SupabaseStudentRepository(
                 _students.value = currentList
             }
 
-            Result.success(reconciled)
+            
+        Log.d("SyncDiag", "REPO UPDATE SUCCESS: id=${reconciled.studentId}")
+                Result.success(reconciled)
         } catch (e: Exception) {
             e.printStackTrace()
             // Offline fallback

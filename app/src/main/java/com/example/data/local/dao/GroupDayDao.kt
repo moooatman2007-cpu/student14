@@ -23,4 +23,7 @@ interface GroupDayDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertGroupDay(groupDay: GroupDayEntity)
+
+    @Query("DELETE FROM group_days WHERE teacher_id = :teacherId")
+    suspend fun deleteGroupDaysByTeacher(teacherId: String)
 }

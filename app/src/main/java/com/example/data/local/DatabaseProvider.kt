@@ -2,6 +2,10 @@ package com.example.data.local
 
 import android.content.Context
 import androidx.room.Room
+import androidx.room.withTransaction
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
 
 object DatabaseProvider {
     @Volatile
@@ -35,7 +39,24 @@ object DatabaseProvider {
         appContext = null
     }
 
-    suspend fun clearAllData() = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+    suspend fun clearDataForTeacher(teacherId: String) = withContext(NonCancellable + Dispatchers.IO) {
+        if (teacherId.isBlank()) return@withContext
+        val db = instance ?: return@withContext
+        db.withTransaction {
+            db.studentDao().deleteStudentsByTeacher(teacherId)
+            db.attendanceDao().deleteAttendanceByTeacher(teacherId)
+            db.recitationDao().deleteRecitationsByTeacher(teacherId)
+            db.examDao().deleteExamsByTeacher(teacherId)
+            db.paymentDao().deletePaymentsByTeacher(teacherId)
+            db.homeworkDao().deleteHomeworkByTeacher(teacherId)
+            db.gradeDao().deleteGradesByTeacher(teacherId)
+            db.groupDao().deleteGroupsByTeacher(teacherId)
+            db.groupDayDao().deleteGroupDaysByTeacher(teacherId)
+            db.outboxDao().clearOperationsForTeacher(teacherId)
+        }
+    }
+
+    suspend fun clearAllData() = withContext(NonCancellable + Dispatchers.IO) {
         instance?.clearAllTables()
     }
 

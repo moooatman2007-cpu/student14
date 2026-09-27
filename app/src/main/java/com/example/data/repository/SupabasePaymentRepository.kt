@@ -49,7 +49,9 @@ class SupabasePaymentRepository(
                 .decodeList<SupabaseLessonPaymentDto>()
                 .map { it.toLessonPayment() }
 
-            paymentDao?.upsertPayments(list.map { it.toEntity() })
+            if (com.example.data.auth.AccountSessionManager.isSessionActive(teacherId)) {
+                paymentDao?.upsertPayments(list.map { it.toEntity() })
+            }
             emit(list)
         } catch (e: Exception) {
             if (BuildConfig.DEBUG) android.util.Log.e("SupabasePaymentRepo", "Network call failed, falling back to local cache for year=$year, month=$month: ${e.message}")
@@ -73,7 +75,9 @@ class SupabasePaymentRepository(
                 .decodeList<SupabaseLessonPaymentDto>()
                 .map { it.toLessonPayment() }
 
-            paymentDao?.upsertPayments(list.map { it.toEntity() })
+            if (com.example.data.auth.AccountSessionManager.isSessionActive(teacherId)) {
+                paymentDao?.upsertPayments(list.map { it.toEntity() })
+            }
             list
         } catch (e: Exception) {
             android.util.Log.e("SupabasePaymentRepo", "Network call failed, falling back to local cache: ${e.message}")
@@ -99,7 +103,9 @@ class SupabasePaymentRepository(
 
             val payment = dto?.toLessonPayment()
             if (payment != null) {
-                paymentDao?.upsertSinglePayment(payment.toEntity())
+                if (com.example.data.auth.AccountSessionManager.isSessionActive(teacherId)) {
+                    paymentDao?.upsertSinglePayment(payment.toEntity())
+                }
                 return@withContext payment
             }
             val cached = paymentDao?.getPaymentForStudentSync(teacherId, studentId, year, month)
@@ -141,7 +147,9 @@ class SupabasePaymentRepository(
             }.decodeSingle<SupabaseLessonPaymentDto>()
 
             val payment = dto.toLessonPayment()
-            paymentDao?.upsertSinglePayment(payment.toEntity())
+            if (com.example.data.auth.AccountSessionManager.isSessionActive(teacherId)) {
+                paymentDao?.upsertSinglePayment(payment.toEntity())
+            }
 
             Result.success(payment)
         } catch (e: Exception) {

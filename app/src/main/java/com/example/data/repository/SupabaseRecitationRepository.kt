@@ -50,6 +50,7 @@ class SupabaseRecitationRepository(
                 .decodeList<SupabaseRecitationDto>()
                 .map { it.toRecitation(teacherId = teacherId) }
 
+            if (!com.example.data.auth.AccountSessionManager.isSessionActive(teacherId)) return
             recitationDao?.upsertRecitations(list.map { it.toEntity() })
         } catch (e: Exception) {
             e.printStackTrace()
@@ -73,6 +74,7 @@ class SupabaseRecitationRepository(
                 .decodeList<SupabaseRecitationDto>()
                 .map { it.toRecitation(teacherId = teacherId) }
 
+            if (!com.example.data.auth.AccountSessionManager.isSessionActive(teacherId)) return
             recitationDao?.upsertRecitations(list.map { it.toEntity() })
         } catch (e: Exception) {
             e.printStackTrace()
@@ -194,7 +196,9 @@ class SupabaseRecitationRepository(
                 .decodeList<SupabaseRecitationDto>()
                 .map { it.toRecitation(teacherId = teacherId) }
 
-            recitationDao?.upsertRecitations(list.map { it.toEntity() })
+            if (com.example.data.auth.AccountSessionManager.isSessionActive(teacherId)) {
+                recitationDao?.upsertRecitations(list.map { it.toEntity() })
+            }
 
             if (list.isEmpty()) return@withContext RecitationSummary()
 
@@ -276,7 +280,9 @@ class SupabaseRecitationRepository(
                             .decodeList<SupabaseRecitationDto>()
                             .map { it.toRecitation(teacherId = teacherId) }
 
-                        recitationDao.upsertRecitations(list.map { it.toEntity() })
+                        if (com.example.data.auth.AccountSessionManager.isSessionActive(teacherId)) {
+                            recitationDao.upsertRecitations(list.map { it.toEntity() })
+                        }
                     } catch (e: Exception) {
                         e.printStackTrace()
                     }
@@ -346,7 +352,9 @@ class SupabaseRecitationRepository(
                 .decodeSingle<SupabaseRecitationDto>()
 
             val recitation = inserted.toRecitation(teacherId = teacherId)
-            recitationDao?.upsertSingleRecitation(recitation.toEntity())
+            if (com.example.data.auth.AccountSessionManager.isSessionActive(teacherId)) {
+                recitationDao?.upsertSingleRecitation(recitation.toEntity())
+            }
 
             Result.success(recitation)
         } catch (e: Exception) {
@@ -410,7 +418,9 @@ class SupabaseRecitationRepository(
             }.decodeSingle<SupabaseRecitationDto>()
 
             val result = updated.toRecitation(teacherId = teacherId)
-            recitationDao?.upsertSingleRecitation(result.toEntity())
+            if (com.example.data.auth.AccountSessionManager.isSessionActive(teacherId)) {
+                recitationDao?.upsertSingleRecitation(result.toEntity())
+            }
 
             Result.success(result)
         } catch (e: Exception) {
@@ -517,7 +527,7 @@ class SupabaseRecitationRepository(
                 .decodeSingleOrNull<SupabaseRecitationDto>()
 
             val recitation = dto?.toRecitation(teacherId = teacherId)
-            if (recitation != null) {
+            if (recitation != null && com.example.data.auth.AccountSessionManager.isSessionActive(teacherId)) {
                 recitationDao?.upsertSingleRecitation(recitation.toEntity())
             }
             recitation

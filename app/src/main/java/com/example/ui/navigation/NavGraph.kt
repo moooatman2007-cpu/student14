@@ -31,6 +31,7 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.example.data.SupabaseClientProvider
+import com.example.data.auth.AccountSessionManager
 import com.example.ui.auth.AuthScreen
 import com.example.ui.add_edit_student.AddEditStudentScreen
 import com.example.ui.home.HomeScreen
@@ -65,10 +66,18 @@ fun MainAppNavigation(
 
     LaunchedEffect(sessionStatus) {
         if (sessionStatus is SessionStatus.NotAuthenticated) {
+            // First: complete clean teardown of user-scoped local data, outbox, and in-memory caches
+            AccountSessionManager.onSessionTerminated()
+            // Second: ONLY after teardown completes, navigate to Auth
             if (currentDestination != null && currentDestination != Screen.Auth.route) {
                 navController.navigate(Screen.Auth.route) {
                     popUpTo(0) { inclusive = true }
                 }
+            }
+        } else if (sessionStatus is SessionStatus.Authenticated) {
+            val user = try { SupabaseClientProvider.client.auth.currentUserOrNull() } catch (_: Exception) { null }
+            if (user != null) {
+                AccountSessionManager.setActiveTeacherId(user.id)
             }
         }
     }

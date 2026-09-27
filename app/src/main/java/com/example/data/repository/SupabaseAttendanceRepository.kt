@@ -66,6 +66,7 @@ class SupabaseAttendanceRepository(
                 .decodeList<SupabaseAttendanceDto>()
                 .map { it.toAttendance(teacherId = teacherId) }
 
+            if (!com.example.data.auth.AccountSessionManager.isSessionActive(teacherId)) return
             attendanceDao?.upsertAttendance(list.map { it.toEntity() })
         } catch (e: Exception) {
             e.printStackTrace()
@@ -89,6 +90,7 @@ class SupabaseAttendanceRepository(
                 .decodeList<SupabaseAttendanceDto>()
                 .map { it.toAttendance(teacherId = teacherId) }
 
+            if (!com.example.data.auth.AccountSessionManager.isSessionActive(teacherId)) return
             attendanceDao?.upsertAttendance(list.map { it.toEntity() })
         } catch (e: Exception) {
             e.printStackTrace()
@@ -206,7 +208,9 @@ class SupabaseAttendanceRepository(
                 .decodeList<SupabaseAttendanceDto>()
                 .map { it.toAttendance(teacherId = teacherId) }
 
-            attendanceDao?.upsertAttendance(list.map { it.toEntity() })
+            if (com.example.data.auth.AccountSessionManager.isSessionActive(teacherId)) {
+                attendanceDao?.upsertAttendance(list.map { it.toEntity() })
+            }
 
             val total = list.size
             val present = list.count { it.status == AttendanceStatus.PRESENT }
@@ -307,7 +311,9 @@ class SupabaseAttendanceRepository(
                             .decodeList<SupabaseAttendanceDto>()
                             .map { it.toAttendance(teacherId = teacherId) }
 
-                        attendanceDao.upsertAttendance(list.map { it.toEntity() })
+                        if (com.example.data.auth.AccountSessionManager.isSessionActive(teacherId)) {
+                            attendanceDao.upsertAttendance(list.map { it.toEntity() })
+                        }
                     } catch (e: Exception) {
                         e.printStackTrace()
                     }
@@ -371,7 +377,9 @@ class SupabaseAttendanceRepository(
             }.decodeSingle<SupabaseAttendanceDto>()
 
             val attendance = dto.toAttendance(teacherId = teacherId)
-            attendanceDao?.upsertSingleAttendance(attendance.toEntity())
+            if (com.example.data.auth.AccountSessionManager.isSessionActive(teacherId)) {
+                attendanceDao?.upsertSingleAttendance(attendance.toEntity())
+            }
 
             Result.success(attendance)
         } catch (e: Exception) {
@@ -534,7 +542,9 @@ class SupabaseAttendanceRepository(
                         note = item.note
                     ).toEntity()
                 }
-                attendanceDao?.upsertAttendance(entities)
+                if (com.example.data.auth.AccountSessionManager.isSessionActive(teacherId)) {
+                    attendanceDao?.upsertAttendance(entities)
+                }
             } catch (cacheEx: Exception) {
                 cacheEx.printStackTrace()
             }
@@ -689,7 +699,7 @@ class SupabaseAttendanceRepository(
                 .decodeSingleOrNull<SupabaseAttendanceDto>()
 
             val attendance = dto?.toAttendance(teacherId = teacherId)
-            if (attendance != null) {
+            if (attendance != null && com.example.data.auth.AccountSessionManager.isSessionActive(teacherId)) {
                 attendanceDao?.upsertSingleAttendance(attendance.toEntity())
             }
             attendance
