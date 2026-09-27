@@ -147,7 +147,7 @@ export async function checkWahaRecentMessageSent(
   maxTimestampSec: number
 ): Promise<{ found: boolean; wahaMessageId: string | null }> {
   try {
-    const url = `${wahaBaseUrl}/api/${sessionName}/chats/${chatId}/messages?limit=20`;
+    const url = `${wahaBaseUrl}/api/${encodeURIComponent(sessionName)}/chats/${encodeURIComponent(chatId)}/messages?limit=20`;
     const res = await fetch(url, {
       method: "GET",
       headers: {
@@ -313,9 +313,9 @@ export async function processNotificationEvent(ctx: ProcessEventContext): Promis
 
   const sessionName = sessionData?.session_name;
   const sessionStatus = sessionData?.status;
-  if (!sessionName || sessionStatus !== "WORKING") {
+  if (!sessionName || (sessionStatus !== "WORKING" && sessionStatus !== "CONNECTED")) {
     await recordFailed(
-      `WhatsApp session unavailable or not WORKING (session: ${sessionName || "NONE"}, status: ${sessionStatus || "NONE"})`,
+      `WhatsApp session unavailable or not WORKING/CONNECTED (session: ${sessionName || "NONE"}, status: ${sessionStatus || "NONE"})`,
     );
     return { success: false, reconciled: false, duplicatePrevented: false, error: "WhatsApp session not active" };
   }
@@ -607,19 +607,22 @@ export async function runWorkerCycle(config: WorkerConfig) {
   const confirmedReconciliations = await finalizeConfirmedSentReconciliations(supabase);
   results.confirmedReconciliations = confirmedReconciliations;
 
-  // 1. Recover stale processing events first
+  // 1. Recover stale processing events first using core RPC with explicit named parameters
+  results.recovery = {};
   for (const type of eventTypes) {
-    const recoverRpcByType = {
-      ABSENCE: "recover_notification_events_v2",
-      HOMEWORK: "recover_homework_notification_events_v2",
-      RECITATION: "recover_recitation_notification_events_v2",
-      EXAM: "recover_exam_notification_events_v2",
-      MONTHLY_REPORT: "recover_monthly_report_notification_events_v2",
-    } as const;
-
     try {
-      await supabase.rpc(recoverRpcByType[type], { p_timeout_minutes: 5 });
-    } catch (_) {}
+      const { data, error } = await supabase.rpc("recover_notification_event_v2_core", {
+        p_event_type: type,
+        p_timeout_minutes: 5,
+      });
+      if (error) {
+        results.recovery[type] = { success: false, error: error.message };
+      } else {
+        results.recovery[type] = { success: true, recoveredCount: data ?? 0 };
+      }
+    } catch (err: any) {
+      results.recovery[type] = { success: false, error: err?.message || String(err) };
+    }
   }
 
   // 2. Claim and process each event type
@@ -677,11 +680,6 @@ export async function runWorkerCycle(config: WorkerConfig) {
     }
   }
 
-  // 3. Monitoring call
-  try {
-    await supabase.rpc("monitor_failed_notification_events");
-  } catch (_) {}
-
   return results;
 }
 
@@ -705,12 +703,13 @@ Deno.serve(async (req: Request) => {
   }
 
   const workerSecret = Deno.env.get("WORKER_SECRET") || "";
+  const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
   const headerSecret = req.headers.get("x-worker-secret");
   const authHeader = req.headers.get("authorization") || "";
 
   const isAuthorized =
-    (workerSecret && headerSecret === workerSecret) ||
-    authHeader.includes(Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "never-match-blank");
+    (workerSecret.length > 0 && headerSecret === workerSecret) ||
+    (serviceRoleKey.length > 0 && authHeader === `Bearer ${serviceRoleKey}`);
 
   if (!isAuthorized) {
     return new Response(JSON.stringify({ ok: false, error: "Unauthorized" }), {

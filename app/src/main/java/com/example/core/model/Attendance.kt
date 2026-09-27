@@ -103,13 +103,20 @@ data class BatchAttendanceResultDto(
     }
 }
 
+enum class BatchSyncStatus {
+    SAVED_TO_CLOUD,
+    QUEUED_OFFLINE,
+    FAILED
+}
+
 data class BatchAttendanceResult(
     val total: Int = 0,
     val presentCount: Int = 0,
     val absentCount: Int = 0,
     val lateCount: Int = 0,
     val excusedCount: Int = 0,
-    val date: String = ""
+    val date: String = "",
+    val syncStatus: BatchSyncStatus = BatchSyncStatus.SAVED_TO_CLOUD
 )
 
 private fun parseIsoToMillis(isoString: String?): Long {

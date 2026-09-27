@@ -21,6 +21,10 @@ export interface ProcessEventContext {
   wahaApiKey: string;
   eventType: "ABSENCE" | "HOMEWORK" | "RECITATION" | "EXAM" | "MONTHLY_REPORT";
   event: any;
+  attemptId: string;
+  claimToken: string;
+  logicalNotificationKey: string;
+  providerIdempotencyKey: string;
 }
 
 export function formatParentPhone(phone: string): string {
@@ -81,43 +85,56 @@ export function constructNotificationMessage(
   }
 }
 
-export async function checkNotificationAlreadySent(
+export async function recordDeliveryAttempt(
   supabase: any,
   params: {
-    teacherId: string;
-    studentId: string;
-    sourceId: string;
-    notificationType: string;
-    channel?: string;
+    attemptId: string;
+    claimToken: string;
+    providerStatus: "SENDING" | "SENT" | "FAILED" | "UNKNOWN";
+    providerMessageId?: string | null;
+    providerResponse?: any;
+    providerError?: string | null;
   }
-): Promise<{ alreadySent: boolean; wahaMessageId: string | null }> {
-  const channel = params.channel || "WHATSAPP";
+): Promise<{ data: any; error?: string }> {
+  const { data, error } = await supabase.rpc(
+    "record_notification_delivery_attempt_v2",
+    {
+      p_attempt_id: params.attemptId,
+      p_claim_token: params.claimToken,
+      p_provider_status: params.providerStatus,
+      p_provider_message_id: params.providerMessageId || null,
+      p_provider_response: params.providerResponse || null,
+      p_provider_error: params.providerError || null,
+    },
+  );
 
-  const { data: rows, error: qErr } = await supabase
-    .from("notifications")
-    .select("id, status, waha_message_id")
-    .eq("teacher_id", params.teacherId)
-    .eq("student_id", params.studentId)
-    .eq("source_id", params.sourceId)
-    .eq("notification_type", params.notificationType)
-    .eq("channel", channel)
-    .eq("status", "SENT")
-    .limit(1);
+  return { data, error: error?.message };
+}
 
-  if (!qErr && rows && rows.length > 0) {
-    return { alreadySent: true, wahaMessageId: rows[0].waha_message_id || null };
-  }
+export async function reconcileDeliveryAttempt(
+  supabase: any,
+  params: {
+    attemptId: string;
+    claimToken: string;
+    resolution: "CONFIRMED_SENT" | "CONFIRMED_NOT_SENT";
+    providerMessageId?: string | null;
+    providerResponse?: any;
+    providerError?: string | null;
+  },
+): Promise<{ data: any; error?: string }> {
+  const { data, error } = await supabase.rpc(
+    "reconcile_notification_delivery_attempt_v2",
+    {
+      p_attempt_id: params.attemptId,
+      p_claim_token: params.claimToken,
+      p_resolution: params.resolution,
+      p_provider_message_id: params.providerMessageId || null,
+      p_provider_response: params.providerResponse || null,
+      p_provider_error: params.providerError || null,
+    },
+  );
 
-  // Fallback to RPC function
-  const { data } = await supabase.rpc("check_notification_already_sent", {
-    p_teacher_id: params.teacherId,
-    p_student_id: params.studentId,
-    p_source_id: params.sourceId,
-    p_notification_type: params.notificationType,
-    p_channel: channel,
-  });
-
-  return { alreadySent: data === true, wahaMessageId: null };
+  return { data, error: error?.message };
 }
 
 export async function checkWahaRecentMessageSent(
@@ -130,7 +147,7 @@ export async function checkWahaRecentMessageSent(
   maxTimestampSec: number
 ): Promise<{ found: boolean; wahaMessageId: string | null }> {
   try {
-    const url = `${wahaBaseUrl}/api/${sessionName}/chats/${chatId}/messages?limit=20`;
+    const url = `${wahaBaseUrl}/api/${encodeURIComponent(sessionName)}/chats/${encodeURIComponent(chatId)}/messages?limit=20`;
     const res = await fetch(url, {
       method: "GET",
       headers: {
@@ -150,11 +167,13 @@ export async function checkWahaRecentMessageSent(
       // 1. Must be sent by the teacher's session
       if (msg.fromMe !== true) continue;
 
-      // 2. Strict Bounded Time Window: must fall within the attempt timeframe
-      if (typeof msg.timestamp === "number") {
-        if (msg.timestamp < minTimestampSec || msg.timestamp > maxTimestampSec) {
-          continue;
-        }
+      // 2. A valid timestamp is required; without it an old identical message
+      //      must never be associated with the current attempt.
+      if (typeof msg.timestamp !== "number" || !Number.isFinite(msg.timestamp)) {
+        continue;
+      }
+      if (msg.timestamp < minTimestampSec || msg.timestamp > maxTimestampSec) {
+        continue;
       }
 
       // 3. Exact deterministic fingerprint match with generated message
@@ -170,9 +189,11 @@ export async function checkWahaRecentMessageSent(
   return { found: false, wahaMessageId: null };
 }
 
-export async function finalizeNotificationSent(
+export async function finalizeNotificationSentV2(
   supabase: any,
   params: {
+    attemptId: string;
+    claimToken: string;
     eventId: string;
     eventType: string;
     teacherId: string;
@@ -183,7 +204,9 @@ export async function finalizeNotificationSent(
   }
 ): Promise<{ success: boolean; error?: string }> {
   const channel = params.channel || "WHATSAPP";
-  const { data, error } = await supabase.rpc("finalize_notification_sent", {
+  const { error } = await supabase.rpc("finalize_notification_sent_v2", {
+    p_attempt_id: params.attemptId,
+    p_claim_token: params.claimToken,
     p_event_id: params.eventId,
     p_event_type: params.eventType,
     p_teacher_id: params.teacherId,
@@ -193,11 +216,9 @@ export async function finalizeNotificationSent(
     p_waha_message_id: params.wahaMessageId || null,
   });
 
-  if (error) {
-    return { success: false, error: error.message };
-  }
-
-  return { success: true };
+  return error
+    ? { success: false, error: error.message }
+    : { success: true };
 }
 
 export async function processNotificationEvent(ctx: ProcessEventContext): Promise<{
@@ -208,35 +229,62 @@ export async function processNotificationEvent(ctx: ProcessEventContext): Promis
   wahaSent?: boolean;
   error?: string;
 }> {
-  const { supabase, wahaBaseUrl, wahaApiKey, eventType, event } = ctx;
+  const {
+    supabase,
+    wahaBaseUrl,
+    wahaApiKey,
+    eventType,
+    event,
+    attemptId,
+    claimToken,
+  } = ctx;
   const teacherId = event.teacher_id;
   const studentId = event.student_id;
 
   let sourceId = "";
-  let notifTypeStr = "";
 
   switch (eventType) {
     case "ABSENCE":
       sourceId = event.attendance_id;
-      notifTypeStr = "ATTENDANCE_ABSENT";
       break;
     case "HOMEWORK":
       sourceId = event.homework_id;
-      notifTypeStr = "HOMEWORK";
       break;
     case "RECITATION":
       sourceId = event.recitation_id;
-      notifTypeStr = "RECITATION";
       break;
     case "EXAM":
       sourceId = event.exam_id;
-      notifTypeStr = "EXAM";
       break;
     case "MONTHLY_REPORT":
       sourceId = event.monthly_report_id;
-      notifTypeStr = "MONTHLY_REPORT";
       break;
   }
+
+  const recordFailed = async (errorMsg: string) => {
+    await recordDeliveryAttempt(supabase, {
+      attemptId,
+      claimToken,
+      providerStatus: "FAILED",
+      providerError: errorMsg,
+    });
+  };
+
+  const finalizeConfirmedSend = async (
+    wahaMessageId: string,
+  ): Promise<{ success: boolean; error?: string }> => {
+    return finalizeNotificationSentV2(supabase, {
+      attemptId,
+      claimToken,
+      eventId: event.id,
+      eventType,
+      teacherId,
+      studentId,
+      sourceId,
+      channel: "WHATSAPP",
+      wahaMessageId,
+    });
+  };
 
   // 1. Strict Tenant Isolation Check: verify student belongs to teacher
   const { data: student, error: studentErr } = await supabase
@@ -247,32 +295,34 @@ export async function processNotificationEvent(ctx: ProcessEventContext): Promis
     .maybeSingle();
 
   if (studentErr || !student || student.deleted_at != null) {
-    await markEventFailed(supabase, eventType, event.id, "Student not found, deleted, or tenant mismatch");
+    await recordFailed("Student not found, deleted, or tenant mismatch");
     return { success: false, reconciled: false, duplicatePrevented: false, error: "Tenant mismatch or student not found" };
   }
 
   if (!student.has_whatsapp || !student.parent_phone) {
-    await markEventFailed(supabase, eventType, event.id, "Student has WhatsApp disabled or no parent phone");
+    await recordFailed("Student has WhatsApp disabled or no parent phone");
     return { success: false, reconciled: false, duplicatePrevented: false, error: "WhatsApp disabled" };
   }
 
   // 2. Check Teacher WhatsApp Session
   const { data: sessionData } = await supabase
     .from("teacher_whatsapp_sessions")
-    .select("status, connected_phone")
+    .select("session_name, status, connected_phone")
     .eq("teacher_id", teacherId)
     .maybeSingle();
 
+  const sessionName = sessionData?.session_name;
   const sessionStatus = sessionData?.status;
-  if (sessionStatus !== "WORKING" && sessionStatus !== "CONNECTED") {
-    await markEventFailed(supabase, eventType, event.id, `WhatsApp session not active (status: ${sessionStatus || "NONE"})`);
+  if (!sessionName || (sessionStatus !== "WORKING" && sessionStatus !== "CONNECTED")) {
+    await recordFailed(
+      `WhatsApp session unavailable or not WORKING/CONNECTED (session: ${sessionName || "NONE"}, status: ${sessionStatus || "NONE"})`,
+    );
     return { success: false, reconciled: false, duplicatePrevented: false, error: "WhatsApp session not active" };
   }
 
-  const sessionName = `teacher_${teacherId}`;
   const rawPhone = formatParentPhone(student.parent_phone);
   if (rawPhone.length < 8) {
-    await markEventFailed(supabase, eventType, event.id, `Invalid parent phone number: ${student.parent_phone}`);
+    await recordFailed(`Invalid parent phone number: ${student.parent_phone}`);
     return { success: false, reconciled: false, duplicatePrevented: false, error: "Invalid phone number" };
   }
   const chatId = `${rawPhone}@c.us`;
@@ -280,64 +330,33 @@ export async function processNotificationEvent(ctx: ProcessEventContext): Promis
   // 3. Construct deterministic exact message text BEFORE reconciliation and sendText
   const messageText = constructNotificationMessage(eventType, student.full_name);
 
-  // 4. Pre-Send Idempotency Check (Database-backed)
-  const dbCheck = await checkNotificationAlreadySent(supabase, {
-    teacherId,
-    studentId,
-    sourceId,
-    notificationType: notifTypeStr,
-    channel: "WHATSAPP",
+  // 4. Record the durable attempt before the external provider request.
+  const sending = await recordDeliveryAttempt(supabase, {
+    attemptId,
+    claimToken,
+    providerStatus: "SENDING",
+    providerResponse: {
+      event_type: eventType,
+      logical_notification_key: ctx.logicalNotificationKey,
+      provider_idempotency_key: ctx.providerIdempotencyKey,
+    },
   });
 
-  if (dbCheck.alreadySent) {
-    console.log(`[Idempotency] Message already recorded SENT for source ${sourceId}`);
-    await finalizeNotificationSent(supabase, {
-      eventId: event.id,
-      eventType,
-      teacherId,
-      studentId,
-      sourceId,
-      wahaMessageId: dbCheck.wahaMessageId,
-    });
-    return { success: true, reconciled: true, duplicatePrevented: true, wahaMessageId: dbCheck.wahaMessageId };
+  if (sending.error) {
+    return {
+      success: false,
+      reconciled: false,
+      duplicatePrevented: false,
+      error: `Attempt transition failed: ${sending.error}`,
+    };
   }
 
-  // 5. Retry Reconciliation against WAHA (when attempts > 1)
-  // Bounded time window: from start of previous processing attempt (or creation) to now + 60s
-  if (event.attempts > 1) {
-    const refTime = event.processing_started_at || event.created_at || new Date().toISOString();
-    const minTimestampSec = Math.floor(new Date(refTime).getTime() / 1000) - 60;
-    const maxTimestampSec = Math.floor(Date.now() / 1000) + 60;
-
-    const recon = await checkWahaRecentMessageSent(
-      wahaBaseUrl,
-      wahaApiKey,
-      sessionName,
-      chatId,
-      messageText,
-      minTimestampSec,
-      maxTimestampSec
-    );
-
-    if (recon.found) {
-      console.log(`[Reconciliation] WAHA history confirms previous send delivered (wahaId: ${recon.wahaMessageId}). Finalizing without resending.`);
-      await finalizeNotificationSent(supabase, {
-        eventId: event.id,
-        eventType,
-        teacherId,
-        studentId,
-        sourceId,
-        wahaMessageId: recon.wahaMessageId,
-      });
-      return { success: true, reconciled: true, duplicatePrevented: true, wahaMessageId: recon.wahaMessageId };
-    }
-  }
-
-  // 6. External Call to WAHA /api/sendText
+  // 5. External Call to WAHA /api/sendText
   const wahaUrl = `${wahaBaseUrl}/api/sendText`;
-  let sendSuccess = false;
   let sendError = "";
   let extractedWahaId: string | null = null;
+  let providerResponse: any = null;
+  let providerStatus: "SENT" | "FAILED" | "UNKNOWN" = "UNKNOWN";
 
   try {
     const wahaRes = await fetch(wahaUrl, {
@@ -354,76 +373,227 @@ export async function processNotificationEvent(ctx: ProcessEventContext): Promis
     });
 
     if (wahaRes.ok) {
-      sendSuccess = true;
       try {
-        const resJson = await wahaRes.json();
-        extractedWahaId = extractWahaMessageId(resJson);
-      } catch (_) {}
+        providerResponse = await wahaRes.json();
+        extractedWahaId = extractWahaMessageId(providerResponse);
+      } catch (err: any) {
+        providerResponse = { parse_error: err?.message || String(err) };
+      }
+
+      providerStatus = extractedWahaId ? "SENT" : "UNKNOWN";
     } else {
       const errText = await wahaRes.text();
       sendError = `WAHA send failed (${wahaRes.status}): ${errText}`;
+      // A non-2xx response does not prove that WAHA did not accept or send
+      // the request. Keep it UNKNOWN to prevent a blind resend.
+      providerStatus = "UNKNOWN";
     }
   } catch (err: any) {
     sendError = `WAHA network failure: ${err.message || String(err)}`;
+    providerStatus = "UNKNOWN";
   }
 
-  if (!sendSuccess) {
-    // WAHA failed before sending: safely mark failed for normal retry
-    await markEventFailed(supabase, eventType, event.id, sendError);
-    return { success: false, reconciled: false, duplicatePrevented: false, error: sendError };
-  }
-
-  // 7. Atomic Finalize in PostgreSQL (Marks event SENT + records history + waha_message_id)
-  const finalizeRes = await finalizeNotificationSent(supabase, {
-    eventId: event.id,
-    eventType,
-    teacherId,
-    studentId,
-    sourceId,
-    wahaMessageId: extractedWahaId,
+  const recorded = await recordDeliveryAttempt(supabase, {
+    attemptId,
+    claimToken,
+    providerStatus,
+    providerMessageId: extractedWahaId,
+    providerResponse,
+    providerError: sendError || null,
   });
 
-  if (!finalizeRes.success) {
-    // CRITICAL: WAHA succeeded, but DB finalize failed (e.g. DB connection dropped/timeout).
-    // DO NOT call markEventFailed which would cause a blind resend!
-    // Leave the event in its current state so the next cycle reconciles against WAHA history.
-    console.error(`[Finalize Warning] Finalize failed after successful WAHA send (wahaId: ${extractedWahaId}): ${finalizeRes.error}`);
+  if (recorded.error) {
+    return {
+      success: false,
+      reconciled: false,
+      duplicatePrevented: false,
+      wahaSent: providerStatus !== "FAILED",
+      wahaMessageId: extractedWahaId,
+      error: recorded.error,
+    };
+  }
+
+  if (providerStatus === "FAILED") {
+    return {
+      success: false,
+      reconciled: false,
+      duplicatePrevented: false,
+      error: sendError || "WAHA send failed",
+    };
+  }
+
+  // A successful provider response without a durable provider message ID is
+  // uncertain. Probe history only for reconciliation; never resend here.
+  if (providerStatus === "UNKNOWN") {
+    const nowSec = Math.floor(Date.now() / 1000);
+    const recon = await checkWahaRecentMessageSent(
+      wahaBaseUrl,
+      wahaApiKey,
+      sessionName,
+      chatId,
+      messageText,
+      nowSec - 120,
+      nowSec + 60,
+    );
+
+    if (recon.found && recon.wahaMessageId) {
+      const reconciled = await reconcileDeliveryAttempt(supabase, {
+        attemptId,
+        claimToken,
+        resolution: "CONFIRMED_SENT",
+        providerMessageId: recon.wahaMessageId,
+        providerResponse,
+      });
+
+      if (!reconciled.error) {
+        const finalized = await finalizeConfirmedSend(recon.wahaMessageId);
+        return {
+          success: finalized.success,
+          reconciled: finalized.success,
+          duplicatePrevented: finalized.success,
+          wahaSent: true,
+          wahaMessageId: recon.wahaMessageId,
+          error: finalized.error,
+        };
+      }
+    }
+
+    return {
+      success: false,
+      reconciled: false,
+      duplicatePrevented: false,
+      wahaSent: true,
+      error: sendError || "WAHA result is uncertain; reconciliation required",
+    };
+  }
+
+  // 6. Explicitly reconcile SENT before fenced finalization.
+  const reconciled = await reconcileDeliveryAttempt(supabase, {
+    attemptId,
+    claimToken,
+    resolution: "CONFIRMED_SENT",
+    providerMessageId: extractedWahaId,
+    providerResponse,
+  });
+
+  if (reconciled.error || !extractedWahaId) {
     return {
       success: false,
       wahaSent: true,
       reconciled: false,
       duplicatePrevented: false,
       wahaMessageId: extractedWahaId,
-      error: finalizeRes.error,
+      error: reconciled.error || "Provider message ID is missing",
     };
   }
 
-  return { success: true, reconciled: false, duplicatePrevented: false, wahaMessageId: extractedWahaId };
-}
+  const finalizeRes = await finalizeConfirmedSend(extractedWahaId);
 
-async function markEventFailed(
-  supabase: any,
-  eventType: string,
-  eventId: string,
-  errorMsg: string
-) {
-  let rpcName = "mark_notification_failed";
-  switch (eventType) {
-    case "HOMEWORK": rpcName = "mark_homework_notification_failed"; break;
-    case "RECITATION": rpcName = "mark_recitation_notification_failed"; break;
-    case "EXAM": rpcName = "mark_exam_notification_failed"; break;
-    case "MONTHLY_REPORT": rpcName = "mark_monthly_report_notification_failed"; break;
-  }
-
-  await supabase.rpc(rpcName, {
-    p_event_id: eventId,
-    p_error: errorMsg,
-  });
+  return {
+    success: finalizeRes.success,
+    reconciled: finalizeRes.success,
+    duplicatePrevented: false,
+    wahaSent: true,
+    wahaMessageId: extractedWahaId,
+    error: finalizeRes.error,
+  };
 }
 
 // ----------------------------------------------------------------------------
 // Worker Handler
 // ----------------------------------------------------------------------------
+
+async function finalizeConfirmedSentReconciliations(
+  supabase: any,
+): Promise<{ finalized: number; errors: string[] }> {
+  const { data: attempts, error: attemptsError } = await supabase
+    .from("notification_delivery_attempts")
+    .select(
+      "attempt_id, claim_token, event_type, event_id, teacher_id, student_id, provider_message_id",
+    )
+    .eq("provider_status", "SENT")
+    .eq("reconciliation_status", "CONFIRMED_SENT")
+    .limit(50);
+
+  if (attemptsError) {
+    return { finalized: 0, errors: [attemptsError.message] };
+  }
+
+  const eventTableByType = {
+    ABSENCE: "notification_events",
+    HOMEWORK: "homework_notification_events",
+    RECITATION: "recitation_notification_events",
+    EXAM: "exam_notification_events",
+    MONTHLY_REPORT: "monthly_report_notification_events",
+  } as const;
+
+  const sourceColumnByType = {
+    ABSENCE: "attendance_id",
+    HOMEWORK: "homework_id",
+    RECITATION: "recitation_id",
+    EXAM: "exam_id",
+    MONTHLY_REPORT: "monthly_report_id",
+  } as const;
+
+  let finalized = 0;
+  const errors: string[] = [];
+
+  for (const attempt of attempts || []) {
+    const eventType = attempt.event_type as keyof typeof eventTableByType;
+    const tableName = eventTableByType[eventType];
+    const sourceColumn = sourceColumnByType[eventType];
+
+    if (!tableName || !sourceColumn || !attempt.provider_message_id) {
+      continue;
+    }
+
+    const { data: event, error: eventError } = await supabase
+      .from(tableName)
+      .select(`id, teacher_id, student_id, claim_token, ${sourceColumn}`)
+      .eq("id", attempt.event_id)
+      .eq("status", "FAILED")
+      .maybeSingle();
+
+    if (eventError) {
+      errors.push(`${attempt.attempt_id}: ${eventError.message}`);
+      continue;
+    }
+
+    if (!event || event.claim_token !== attempt.claim_token) {
+      continue;
+    }
+
+    const sourceId = event[sourceColumn];
+    if (
+      event.teacher_id !== attempt.teacher_id ||
+      event.student_id !== attempt.student_id ||
+      !sourceId
+    ) {
+      errors.push(`${attempt.attempt_id}: event identity mismatch`);
+      continue;
+    }
+
+    const result = await finalizeNotificationSentV2(supabase, {
+      attemptId: attempt.attempt_id,
+      claimToken: attempt.claim_token,
+      eventId: event.id,
+      eventType,
+      teacherId: event.teacher_id,
+      studentId: event.student_id,
+      sourceId,
+      channel: "WHATSAPP",
+      wahaMessageId: attempt.provider_message_id,
+    });
+
+    if (result.success) {
+      finalized += 1;
+    } else if (result.error) {
+      errors.push(`${attempt.attempt_id}: ${result.error}`);
+    }
+  }
+
+  return { finalized, errors };
+}
 
 export async function runWorkerCycle(config: WorkerConfig) {
   const supabase = createClient(config.supabaseUrl, config.serviceRoleKey, {
@@ -433,57 +603,82 @@ export async function runWorkerCycle(config: WorkerConfig) {
   const results: Record<string, any> = {};
   const eventTypes = ["ABSENCE", "HOMEWORK", "RECITATION", "EXAM", "MONTHLY_REPORT"] as const;
 
-  // 1. Recover stale processing events first
-  for (const type of eventTypes) {
-    let recoverRpc = "recover_stale_notification_events";
-    if (type === "HOMEWORK") recoverRpc = "recover_stale_homework_notification_events";
-    if (type === "RECITATION") recoverRpc = "recover_stale_recitation_notification_events";
-    if (type === "EXAM") recoverRpc = "recover_stale_exam_notification_events";
-    if (type === "MONTHLY_REPORT") recoverRpc = "recover_stale_monthly_report_notification_events";
+  // Finalize already-confirmed provider sends without calling WAHA.
+  const confirmedReconciliations = await finalizeConfirmedSentReconciliations(supabase);
+  results.confirmedReconciliations = confirmedReconciliations;
 
+  // 1. Recover stale processing events first using core RPC with explicit named parameters
+  results.recovery = {};
+  for (const type of eventTypes) {
     try {
-      await supabase.rpc(recoverRpc, { p_timeout_minutes: 5 });
-    } catch (_) {}
+      const { data, error } = await supabase.rpc("recover_notification_event_v2_core", {
+        p_event_type: type,
+        p_timeout_minutes: 5,
+      });
+      if (error) {
+        results.recovery[type] = { success: false, error: error.message };
+      } else {
+        results.recovery[type] = { success: true, recoveredCount: data ?? 0 };
+      }
+    } catch (err: any) {
+      results.recovery[type] = { success: false, error: err?.message || String(err) };
+    }
   }
 
   // 2. Claim and process each event type
   for (const type of eventTypes) {
-    let claimRpc = "claim_notification_event";
-    if (type === "HOMEWORK") claimRpc = "claim_homework_notification_event";
-    if (type === "RECITATION") claimRpc = "claim_recitation_notification_event";
-    if (type === "EXAM") claimRpc = "claim_exam_notification_event";
-    if (type === "MONTHLY_REPORT") claimRpc = "claim_monthly_report_notification_event";
+    const claimRpcByType = {
+      ABSENCE: "claim_notification_event_v2",
+      HOMEWORK: "claim_homework_notification_event_v2",
+      RECITATION: "claim_recitation_notification_event_v2",
+      EXAM: "claim_exam_notification_event_v2",
+      MONTHLY_REPORT: "claim_monthly_report_notification_event_v2",
+    } as const;
 
-    let claimedList: any[] = [];
     try {
-      const { data } = await supabase.rpc(claimRpc);
-      if (Array.isArray(data)) {
-        claimedList = data;
+      const { data, error } = await supabase.rpc(claimRpcByType[type]);
+      if (error) {
+        results[type] = { error: `Claim error: ${error.message}` };
+        continue;
       }
-    } catch (e: any) {
-      results[type] = { error: `Claim error: ${e.message}` };
-      continue;
-    }
 
-    const processedList = [];
-    for (const event of claimedList) {
+      if (!data) {
+        results[type] = { claimedCount: 0, processed: [] };
+        continue;
+      }
+
+      const claimedEvent = data.event;
+      if (
+        !claimedEvent ||
+        !data.attempt_id ||
+        !data.claim_token ||
+        !data.logical_notification_key ||
+        !data.provider_idempotency_key
+      ) {
+        results[type] = { error: "Claim response missing durable lease data" };
+        continue;
+      }
+
       const outcome = await processNotificationEvent({
         supabase,
         wahaBaseUrl: config.wahaBaseUrl,
         wahaApiKey: config.wahaApiKey,
         eventType: type,
-        event,
+        event: claimedEvent,
+        attemptId: data.attempt_id,
+        claimToken: data.claim_token,
+        logicalNotificationKey: data.logical_notification_key,
+        providerIdempotencyKey: data.provider_idempotency_key,
       });
-      processedList.push({ id: event.id, outcome });
+
+      results[type] = {
+        claimedCount: 1,
+        processed: [{ id: claimedEvent.id, outcome }],
+      };
+    } catch (e: any) {
+      results[type] = { error: `Claim error: ${e.message}` };
     }
-
-    results[type] = { claimedCount: claimedList.length, processed: processedList };
   }
-
-  // 3. Monitoring call
-  try {
-    await supabase.rpc("monitor_failed_notification_events");
-  } catch (_) {}
 
   return results;
 }
@@ -493,13 +688,28 @@ Deno.serve(async (req: Request) => {
     return new Response("ok", { status: 200, headers: corsHeaders });
   }
 
+  if ((Deno.env.get("NOTIFICATION_WORKER_DISABLED") || "").toLowerCase() === "true") {
+    return new Response(
+      JSON.stringify({
+        ok: false,
+        disabled: true,
+        reason: "notification worker temporarily disabled",
+      }),
+      {
+        status: 503,
+        headers: corsHeaders,
+      },
+    );
+  }
+
   const workerSecret = Deno.env.get("WORKER_SECRET") || "";
+  const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
   const headerSecret = req.headers.get("x-worker-secret");
   const authHeader = req.headers.get("authorization") || "";
 
   const isAuthorized =
-    (workerSecret && headerSecret === workerSecret) ||
-    authHeader.includes(Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "never-match-blank");
+    (workerSecret.length > 0 && headerSecret === workerSecret) ||
+    (serviceRoleKey.length > 0 && authHeader === `Bearer ${serviceRoleKey}`);
 
   if (!isAuthorized) {
     return new Response(JSON.stringify({ ok: false, error: "Unauthorized" }), {

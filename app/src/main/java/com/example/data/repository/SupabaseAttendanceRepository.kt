@@ -6,6 +6,7 @@ import com.example.core.model.AttendanceSummary
 import com.example.core.model.BatchAttendanceItemDto
 import com.example.core.model.BatchAttendanceResult
 import com.example.core.model.BatchAttendanceResultDto
+import com.example.core.model.BatchSyncStatus
 import com.example.core.model.SupabaseAttendanceDto
 import com.example.core.model.UpsertAttendanceRequest
 import com.example.data.SupabaseClientProvider
@@ -374,7 +375,7 @@ class SupabaseAttendanceRepository(
 
             Result.success(attendance)
         } catch (e: Exception) {
-            e.printStackTrace()
+            android.util.Log.e("SupabaseAttendanceRepo", "Failed to upsert attendance to Supabase: ${e.message}")
             // Offline fallback
             try {
                 kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
@@ -433,6 +434,12 @@ class SupabaseAttendanceRepository(
             return@withContext Result.success(BatchAttendanceResult(total = 0, date = date))
         }
 
+        val studentEntitiesMap = studentDao?.getAllStudentsSync(teacherId)?.associateBy { it.studentId } ?: emptyMap()
+        var batchResult: BatchAttendanceResult? = null
+        var cloudSaved = false
+        var lastCloudError: Exception? = null
+
+        // 1. Primary Strategy: Try RPC record_batch_attendance
         try {
             val recordsArray = buildJsonArray {
                 for (item in records) {
@@ -458,8 +465,62 @@ class SupabaseAttendanceRepository(
                 parameters = params
             ).decodeSingle<BatchAttendanceResultDto>()
 
+            batchResult = resultDto.toBatchAttendanceResult().copy(syncStatus = BatchSyncStatus.SAVED_TO_CLOUD)
+            cloudSaved = true
+        } catch (rpcEx: Exception) {
+            lastCloudError = rpcEx
+            android.util.Log.w("SupabaseAttendanceRepo", "record_batch_attendance RPC call failed (${rpcEx.javaClass.simpleName}: ${rpcEx.message}). Falling back to direct Postgrest bulk upsert...")
+
+            // 2. Secondary Strategy: Direct Postgrest Bulk Upsert on 'attendance' table
             try {
-                val studentEntitiesMap = studentDao?.getAllStudentsSync(teacherId)?.associateBy { it.studentId } ?: emptyMap()
+                val upsertRequests = records.map { item ->
+                    val studentGroupId = studentEntitiesMap[item.studentId]?.groupId
+                    UpsertAttendanceRequest(
+                        teacherId = teacherId,
+                        studentId = item.studentId,
+                        groupId = studentGroupId,
+                        date = date,
+                        status = item.status,
+                        note = item.note?.ifBlank { null }
+                    )
+                }
+
+                client.postgrest["attendance"].upsert(upsertRequests) {
+                    onConflict = "student_id,date"
+                }
+
+                var presentCount = 0
+                var absentCount = 0
+                var lateCount = 0
+                var excusedCount = 0
+                for (record in records) {
+                    val statusEnum = try { AttendanceStatus.valueOf(record.status) } catch(_: Exception) { AttendanceStatus.PRESENT }
+                    when (statusEnum) {
+                        AttendanceStatus.PRESENT -> presentCount++
+                        AttendanceStatus.ABSENT -> absentCount++
+                        AttendanceStatus.LATE -> lateCount++
+                        AttendanceStatus.EXCUSED -> excusedCount++
+                    }
+                }
+
+                batchResult = BatchAttendanceResult(
+                    total = records.size,
+                    presentCount = presentCount,
+                    absentCount = absentCount,
+                    lateCount = lateCount,
+                    excusedCount = excusedCount,
+                    date = date,
+                    syncStatus = BatchSyncStatus.SAVED_TO_CLOUD
+                )
+                cloudSaved = true
+            } catch (bulkEx: Exception) {
+                lastCloudError = bulkEx
+                android.util.Log.e("SupabaseAttendanceRepo", "Direct Postgrest bulk upsert failed (${bulkEx.javaClass.simpleName}: ${bulkEx.message})")
+            }
+        }
+
+        if (cloudSaved && batchResult != null) {
+            try {
                 val entities = records.map { item ->
                     val statusEnum = try { AttendanceStatus.valueOf(item.status) } catch(_: Exception) { AttendanceStatus.PRESENT }
                     val studentGroupId = studentEntitiesMap[item.studentId]?.groupId
@@ -477,11 +538,10 @@ class SupabaseAttendanceRepository(
             } catch (cacheEx: Exception) {
                 cacheEx.printStackTrace()
             }
-
-            Result.success(resultDto.toBatchAttendanceResult())
-        } catch (e: Exception) {
-            e.printStackTrace()
+            Result.success(batchResult)
+        } else {
             // Offline fallback: store directly in Room and Outbox with ZERO network calls in loop
+            val cloudException = lastCloudError ?: Exception("Unknown cloud error")
             try {
                 var presentCount = 0
                 var absentCount = 0
@@ -491,7 +551,6 @@ class SupabaseAttendanceRepository(
                 val entities = ArrayList<AttendanceEntity>(records.size)
                 val outboxOps = ArrayList<OutboxEntity>(records.size)
                 val now = System.currentTimeMillis()
-                val studentEntitiesMap = studentDao?.getAllStudentsSync(teacherId)?.associateBy { it.studentId } ?: emptyMap()
 
                 for (record in records) {
                     val statusEnum = try { AttendanceStatus.valueOf(record.status) } catch(_: Exception) { AttendanceStatus.PRESENT }
@@ -542,19 +601,10 @@ class SupabaseAttendanceRepository(
                 outboxDao?.insertOperations(outboxOps)
                 OutboxSyncScheduler.scheduleSync()
 
-                Result.success(
-                    BatchAttendanceResult(
-                        total = records.size,
-                        presentCount = presentCount,
-                        absentCount = absentCount,
-                        lateCount = lateCount,
-                        excusedCount = excusedCount,
-                        date = date
-                    )
-                )
+                Result.failure(Exception("فشل الحفظ المباشر على السحابة: ${cloudException.message ?: "تعذر الاتصال بالسيرفر"}. تم حفظ السجلات محلياً في قائمة الانتظار للمزامنة."))
             } catch (ex: Exception) {
                 ex.printStackTrace()
-                Result.failure(Exception("فشل حفظ الحضور الجماعي محلياً: ${ex.message}"))
+                Result.failure(Exception("فشل حفظ الحضور: ${ex.message}"))
             }
         }
     }

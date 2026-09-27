@@ -702,49 +702,7 @@ fun MoreScreen(
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.spacedBy(Dimens.Spacing12)
                     ) {
-                        if (uiState.isStartingWaha) {
-                            Column(
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                                modifier = Modifier.padding(vertical = Dimens.Spacing16)
-                            ) {
-                                CircularProgressIndicator(color = PrimaryIndigo)
-                                Spacer(modifier = Modifier.height(Dimens.Spacing12))
-                                Text(
-                                    text = "جاري الاتصال بالخادم وتحديث الحالة...",
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    textAlign = TextAlign.Center
-                                )
-                            }
-                        } else if (uiState.wahaPairingError != null || (uiState.pairingCodeError != null && uiState.pairingCode == null && !uiState.isPairingCodeExpired)) {
-                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                Icon(
-                                    imageVector = Icons.Default.Info,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.error,
-                                    modifier = Modifier.size(48.dp)
-                                )
-                                Spacer(modifier = Modifier.height(Dimens.Spacing8))
-                                Text(
-                                    text = uiState.wahaPairingError ?: uiState.pairingCodeError!!,
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = MaterialTheme.colorScheme.error,
-                                    textAlign = TextAlign.Center
-                                )
-                                Spacer(modifier = Modifier.height(Dimens.Spacing16))
-                                Button(
-                                    onClick = {
-                                        if (uiState.wahaPairingError != null) viewModel.startWaha()
-                                        else viewModel.requestPairingCode()
-                                    },
-                                    colors = ButtonDefaults.buttonColors(containerColor = PrimaryIndigo),
-                                    shape = RoundedCornerShape(12.dp),
-                                    modifier = Modifier.testTag("start_waha_button")
-                                ) {
-                                    Text("المحاولة مرة أخرى")
-                                }
-                            }
-                        } else if (uiState.wahaSessionStatus == "CONNECTED" || uiState.wahaSessionStatus == "WORKING") {
+                        if (uiState.wahaSessionStatus == "CONNECTED" || uiState.wahaSessionStatus == "WORKING") {
                             Column(
                                 horizontalAlignment = Alignment.CenterHorizontally,
                                 modifier = Modifier.padding(vertical = Dimens.Spacing8)
@@ -861,7 +819,49 @@ fun MoreScreen(
                                         modifier = Modifier.fillMaxWidth()
                                     )
 
-                                    if (qrBitmap != null) {
+                                    if (uiState.isStartingWaha) {
+                                        Column(
+                                            horizontalAlignment = Alignment.CenterHorizontally,
+                                            modifier = Modifier.padding(vertical = Dimens.Spacing16)
+                                        ) {
+                                            CircularProgressIndicator(color = PrimaryIndigo)
+                                            Spacer(modifier = Modifier.height(Dimens.Spacing12))
+                                            Text(
+                                                text = "جاري الاتصال بالخادم وتحديث رمز QR...",
+                                                style = MaterialTheme.typography.bodyMedium,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                textAlign = TextAlign.Center
+                                            )
+                                        }
+                                    } else if (uiState.wahaPairingError != null) {
+                                        Column(
+                                            horizontalAlignment = Alignment.CenterHorizontally,
+                                            modifier = Modifier.padding(vertical = Dimens.Spacing8)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.Info,
+                                                contentDescription = null,
+                                                tint = MaterialTheme.colorScheme.error,
+                                                modifier = Modifier.size(44.dp)
+                                            )
+                                            Spacer(modifier = Modifier.height(Dimens.Spacing8))
+                                            Text(
+                                                text = uiState.wahaPairingError!!,
+                                                style = MaterialTheme.typography.bodyMedium,
+                                                color = MaterialTheme.colorScheme.error,
+                                                textAlign = TextAlign.Center
+                                            )
+                                            Spacer(modifier = Modifier.height(Dimens.Spacing12))
+                                            Button(
+                                                onClick = viewModel::startWaha,
+                                                colors = ButtonDefaults.buttonColors(containerColor = PrimaryIndigo),
+                                                shape = RoundedCornerShape(12.dp),
+                                                modifier = Modifier.testTag("start_waha_button")
+                                            ) {
+                                                Text("المحاولة مرة أخرى")
+                                            }
+                                        }
+                                    } else if (qrBitmap != null) {
                                         Box(
                                             modifier = Modifier
                                                 .size(200.dp)
@@ -884,7 +884,15 @@ fun MoreScreen(
                                                 .background(MaterialTheme.colorScheme.surfaceVariant),
                                             contentAlignment = Alignment.Center
                                         ) {
-                                            CircularProgressIndicator(color = PrimaryIndigo)
+                                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                                CircularProgressIndicator(color = PrimaryIndigo)
+                                                Spacer(modifier = Modifier.height(Dimens.Spacing8))
+                                                Text(
+                                                    text = "جاري تجهيز رمز QR...",
+                                                    style = MaterialTheme.typography.bodySmall,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                )
+                                            }
                                         }
                                     }
 

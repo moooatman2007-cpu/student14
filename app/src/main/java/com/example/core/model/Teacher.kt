@@ -37,3 +37,11 @@ data class UpsertTeacherRequest(
     @SerialName("educational_stage") val educationalStage: String? = null,
     @SerialName("avatar_url") val avatarUrl: String? = null
 )
+
+@Serializable
+data class TeacherStats(
+    val totalStudents: Int = 0,
+    val gradeCounts: Map<String, Int> = emptyMap(),
+    val whatsappEnabledCount: Int = 0,
+    val hasAlternativePhoneCount: Int = 0
+)

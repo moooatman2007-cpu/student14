@@ -294,12 +294,39 @@ class MoreViewModel(
                         latencyMs
                     }
 
+                    val sessionExists = if (resJson != null && resJson.has("session_exists")) {
+                        resJson.optBoolean("session_exists", statusVal != 404)
+                    } else {
+                        statusVal != 404
+                    }
+
+                    val sessionStatus = resJson?.optString("session_status", if (statusVal == 404) "NOT_FOUND" else "UNKNOWN") ?: "UNKNOWN"
+
+                    val isConnected = if (resJson != null && resJson.has("whatsapp_connected")) {
+                        resJson.optBoolean("whatsapp_connected", false)
+                    } else {
+                        sessionStatus == "WORKING" || sessionStatus == "CONNECTED"
+                    }
+
                     val resultText = buildString {
                         append("WhatsApp Server Connection Test\n\n")
                         append("reachable: $reachable\n")
+                        append("session_exists: $sessionExists\n")
                         append("status: $statusVal\n")
+                        append("session_status: $sessionStatus\n")
+                        append("whatsapp_connected: $isConnected\n")
                         append("latency_ms: ${jsonLatency}ms\n")
                         append("success: $success")
+
+                        if (!reachable) {
+                            append("\n\nتعذر الوصول إلى خادم WAHA. يرجى التحقق من عمل السيرفر والمفتاح.")
+                        } else if (!sessionExists) {
+                            append("\n\nخادم WhatsApp متصل وجاهز للعمل ✓\n(الجلسة غير موجودة بعد - يمكنك الضغط على 'ربط WhatsApp' لبدء الربط).")
+                        } else if (isConnected) {
+                            append("\n\nجلسة WhatsApp متصلة وتعمل بنجاح ✓")
+                        } else {
+                            append("\n\nالخادم متصل، وحالة الجلسة: $sessionStatus")
+                        }
                     }
 
                     _uiState.update {
@@ -420,6 +447,24 @@ class MoreViewModel(
                     val success = resJson.optBoolean("success", false)
                     if (!success) {
                         val msg = resJson.optString("message", "تعذر الاتصال بخدمة واتساب")
+                        val isQrPending = msg.contains("not available yet", ignoreCase = true) ||
+                                msg.contains("QR code is not available", ignoreCase = true) ||
+                                msg.contains("جاري تجهيز", ignoreCase = true) ||
+                                msg.contains("started but QR", ignoreCase = true)
+
+                        if (isQrPending) {
+                            // WAHA session is running and generating the QR code in background
+                            _uiState.update {
+                                it.copy(
+                                    isStartingWaha = false,
+                                    wahaSessionStatus = "SCAN_QR_CODE",
+                                    wahaPairingError = null
+                                )
+                            }
+                            startWahaPolling()
+                            return@launch
+                        }
+
                         _uiState.update {
                             it.copy(
                                 isStartingWaha = false,
@@ -429,10 +474,16 @@ class MoreViewModel(
                         return@launch
                     }
 
-                    val status = resJson.optString("status", "")
+                    val status = resJson.optString("session_status", resJson.optString("status", ""))
                     val connectedPhone = resJson.optString("connected_phone", "")
-                    val qrObj = resJson.optJSONObject("qr")
-                    val qrData = qrObj?.optString("data", "")
+                    val qrData = if (resJson.has("qr") && !resJson.isNull("qr")) {
+                        val qrObj = resJson.optJSONObject("qr")
+                        if (qrObj != null) {
+                            qrObj.optString("data", qrObj.optString("qr", ""))
+                        } else {
+                            resJson.optString("qr", "")
+                        }
+                    } else null
 
                     _uiState.update {
                         it.copy(
@@ -565,10 +616,16 @@ class MoreViewModel(
                     val resJson = JSONObject(responseStr)
 
                     if (resJson.optBoolean("success", false)) {
-                        val status = resJson.optString("status", "")
+                        val status = resJson.optString("session_status", resJson.optString("status", ""))
                         val connectedPhone = resJson.optString("connected_phone", "")
-                        val qrObj = resJson.optJSONObject("qr")
-                        val qrData = qrObj?.optString("data", "")
+                        val qrData = if (resJson.has("qr") && !resJson.isNull("qr")) {
+                            val qrObj = resJson.optJSONObject("qr")
+                            if (qrObj != null) {
+                                qrObj.optString("data", qrObj.optString("qr", ""))
+                            } else {
+                                resJson.optString("qr", "")
+                            }
+                        } else null
 
                         _uiState.update {
                             it.copy(
@@ -726,7 +783,16 @@ class MoreViewModel(
                         return@launch
                     }
 
-                    val code = resJson.optString("code", "")
+                    var code = resJson.optString("code", "").trim()
+                    if (code.isEmpty()) {
+                        code = resJson.optJSONObject("data")?.optString("code", "")?.trim() ?: ""
+                    }
+                    if (code.isEmpty()) {
+                        code = resJson.optJSONObject("waha_response")?.optString("code", "")?.trim() ?: ""
+                    }
+                    if (code.isEmpty()) {
+                        code = resJson.optString("pairingCode", "").trim()
+                    }
                     lastCopiedPairingCode = code
                     _uiState.update {
                         it.copy(

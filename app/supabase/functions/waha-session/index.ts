@@ -2,15 +2,76 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.8";
 
 export const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Headers":
+    "authorization, x-client-info, apikey, content-type",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
 interface RequestBody {
   action?: string;
   phoneNumber?: string;
-  teacher_id?: string; // Explicitly ignored for security
-  session_name?: string; // Explicitly ignored for security
+  teacher_id?: string; // Ignored: derived from JWT
+  session_name?: string; // Ignored: derived from JWT
+}
+
+function jsonResponse(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: {
+      ...corsHeaders,
+      "Content-Type": "application/json",
+    },
+  });
+}
+
+function normalizeEgyptianPhone(value: string): string | null {
+  if (typeof value !== "string") return null;
+  const digits = value.replace(/\D/g, "");
+  if (/^01[0125][0-9]{8}$/.test(digits)) return `20${digits.slice(1)}`;
+  if (/^201[0125][0-9]{8}$/.test(digits)) return digits;
+  if (/^00201[0125][0-9]{8}$/.test(digits)) return digits.slice(2);
+  return digits.length >= 8 ? digits : null;
+}
+
+function isWorkingStatus(status: unknown): boolean {
+  return status === "WORKING" || status === "CONNECTED";
+}
+
+function normalizeStatus(status: unknown): string {
+  if (typeof status !== "string") return "DISCONNECTED";
+  const s = status.toUpperCase();
+  if (s === "WORKING" || s === "CONNECTED") return s;
+  if (s === "SCAN_QR_CODE" || s === "STARTING") return "SCAN_QR_CODE";
+  if (s === "STOPPED" || s === "DISCONNECTED") return "DISCONNECTED";
+  if (s === "FAILED") return "FAILED";
+  return "DISCONNECTED";
+}
+
+async function fetchWithTimeout(
+  url: string,
+  options: RequestInit = {},
+  timeoutMs = 12000
+): Promise<Response> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, { ...options, signal: controller.signal });
+    clearTimeout(timeoutId);
+    return res;
+  } catch (err) {
+    clearTimeout(timeoutId);
+    throw err;
+  }
+}
+
+async function readResponseBody(res: Response): Promise<unknown> {
+  const text = await res.text();
+  if (!text) return null;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return text;
+  }
 }
 
 Deno.serve(async (req: Request) => {
@@ -19,463 +80,527 @@ Deno.serve(async (req: Request) => {
     return new Response("ok", { headers: corsHeaders });
   }
 
+  if (req.method !== "POST") {
+    return jsonResponse({ success: false, error: "Method not allowed" }, 405);
+  }
+
   try {
-    // 2. Parse body and action
+    // 2. Parse request body
     let body: RequestBody = {};
     try {
-      body = await req.clone().json();
-    } catch (_) {
-      // Body empty or malformed
+      body = await req.json();
+    } catch {
+      body = {};
     }
-    const action = body.action;
-    if (action !== "START" && action !== "LOGOUT" && action !== "TEST_WAHA_CONNECTION" && action !== "REQUEST_PAIRING_CODE") {
-      return new Response(
-        JSON.stringify({ success: false, message: "Invalid or unsupported action" }),
-        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+
+    const action = body.action || "TEST_WAHA_CONNECTION";
+    const supportedActions = new Set([
+      "START",
+      "LOGOUT",
+      "TEST_WAHA_CONNECTION",
+      "REQUEST_PAIRING_CODE",
+    ]);
+
+    if (!supportedActions.has(action)) {
+      return jsonResponse(
+        { success: false, message: `Unsupported action: ${action}` },
+        400
       );
     }
 
     // 3. Validate User Authentication via JWT
     const authHeader = req.headers.get("Authorization");
     if (!authHeader || !authHeader.startsWith("Bearer ")) {
-      return new Response(
-        JSON.stringify({ success: false, message: "Authorization header missing or invalid" }),
-        { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      return jsonResponse(
+        { success: false, message: "Authorization header missing or invalid" },
+        401
       );
     }
 
     const supabaseUrl = Deno.env.get("SUPABASE_URL") || "";
     const supabaseAnonKey = Deno.env.get("SUPABASE_ANON_KEY") || "";
-    const supabaseServiceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
+    const supabaseServiceRoleKey =
+      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
 
     if (!supabaseServiceRoleKey) {
-      return new Response(
-        JSON.stringify({ success: false, message: "Server configuration error: Service role key missing" }),
-        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      return jsonResponse(
+        {
+          success: false,
+          message: "Server configuration error: Service role key missing",
+        },
+        500
       );
     }
 
     const authClient = createClient(supabaseUrl, supabaseAnonKey, {
       global: { headers: { Authorization: authHeader } },
+      auth: { persistSession: false, autoRefreshToken: false },
     });
 
-    const { data: { user }, error: authError } = await authClient.auth.getUser();
+    const {
+      data: { user },
+      error: authError,
+    } = await authClient.auth.getUser();
 
     if (authError || !user) {
-      return new Response(
-        JSON.stringify({ success: false, message: "Invalid or expired authorization token" }),
-        { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      return jsonResponse(
+        { success: false, message: "Invalid or expired authorization token" },
+        401
       );
     }
 
-    // 4. Create Server-Side DB Client using Service Role Key
-    const dbClient = createClient(supabaseUrl, supabaseServiceRoleKey);
+    // 4. Server-Side DB Client using Service Role Key
+    const dbClient = createClient(supabaseUrl, supabaseServiceRoleKey, {
+      auth: { persistSession: false, autoRefreshToken: false },
+    });
 
-    // 5. Derive Teacher ID & Session Name strictly server-side from JWT
+    // 5. Derive Teacher ID & Session Name strictly server-side
     const teacherId = user.id;
     const sessionName = `teacher_${teacherId}`;
 
-    // 6. Read Environment Secrets securely
-    const wahaBaseUrl = (Deno.env.get("WAHA_BASE_URL") || "").replace(/\/+$/, "");
+    // 6. Read WAHA Environment Secrets
+    const wahaBaseUrl = (Deno.env.get("WAHA_BASE_URL") || "").replace(
+      /\/+$/,
+      ""
+    );
     const wahaApiKey = Deno.env.get("WAHA_API_KEY") || "";
 
     if (!wahaBaseUrl) {
-      return new Response(
-        JSON.stringify({ success: false, message: "تعذر الاتصال بخدمة واتساب" }),
-        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      return jsonResponse(
+        { success: false, message: "WAHA_BASE_URL is not configured" },
+        500
       );
     }
 
     const wahaHeaders: Record<string, string> = {
       "Content-Type": "application/json",
+      Accept: "application/json",
     };
     if (wahaApiKey) {
       wahaHeaders["X-Api-Key"] = wahaApiKey;
     }
 
-    // Helper for unified timeout fetch (10s)
-    async function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutMs = 10000): Promise<Response> {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-      try {
-        const res = await fetch(url, { ...options, signal: controller.signal });
-        clearTimeout(timeoutId);
-        return res;
-      } catch (err) {
-        clearTimeout(timeoutId);
-        throw err;
-      }
-    }
-
-    // ------------------------------------------------------------------------
-    // ACTION: START
-    // ------------------------------------------------------------------------
-    if (action === "START") {
-      let wahaSessionStatus = "STOPPED";
-      let meId: string | null = null;
-
-      try {
-        const getSessionRes = await fetchWithTimeout(`${wahaBaseUrl}/api/sessions/${sessionName}`, {
-          method: "GET",
-          headers: wahaHeaders,
-        });
-
-        if (getSessionRes.status === 404) {
-          const createSessionRes = await fetchWithTimeout(`${wahaBaseUrl}/api/sessions`, {
-            method: "POST",
-            headers: wahaHeaders,
-            body: JSON.stringify({ name: sessionName }),
-          });
-
-          if (!createSessionRes.ok && createSessionRes.status !== 409) {
-            throw new Error(`WAHA Session creation failed status: ${createSessionRes.status}`);
-          }
-        } else if (getSessionRes.ok) {
-          const sessionData = await getSessionRes.json();
-          wahaSessionStatus = sessionData?.status || "STOPPED";
-          meId = sessionData?.me?.id || sessionData?.me || null;
-        }
-      } catch (err) {
-        console.error("WAHA Session Operation Error");
-        return new Response(
-          JSON.stringify({ success: false, message: "تعذر بدء ربط واتساب (انتهت المهلة أو خطأ بالاتصال)" }),
-          { status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        );
-      }
-
-      // Step B: If session is already WORKING / CONNECTED
-      if (wahaSessionStatus === "WORKING" || wahaSessionStatus === "CONNECTED") {
-        let cleanPhone = "";
-        if (meId && typeof meId === "string") {
-          cleanPhone = meId.split("@")[0].replace(/[^0-9]/g, "");
-        }
-
-        const { error: upsertError } = await dbClient.from("teacher_whatsapp_sessions").upsert(
-          {
-            teacher_id: teacherId,
-            session_name: sessionName,
-            status: "CONNECTED",
-            connected_phone: cleanPhone || null,
-            last_connected_at: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
-          },
-          { onConflict: "teacher_id" }
-        );
-
-        if (upsertError) {
-          console.error("Database upsert failed");
-          return new Response(
-            JSON.stringify({ success: false, message: "فشل حفظ حالة الجلسة في قاعدة البيانات" }),
-            { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-          );
-        }
-
-        return new Response(
-          JSON.stringify({
-            success: true,
-            status: "CONNECTED",
-            session_name: sessionName,
-            connected_phone: cleanPhone,
-          }),
-          { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        );
-      }
-
-      // Step C: Start session if not already running
-      if (wahaSessionStatus !== "SCAN_QR_CODE" && wahaSessionStatus !== "STARTING") {
-        try {
-          await fetchWithTimeout(`${wahaBaseUrl}/api/sessions/${sessionName}/start`, {
-            method: "POST",
-            headers: wahaHeaders,
-          });
-        } catch (err) {
-          console.error("WAHA Session Start Error");
-        }
-      }
-
-      // Step D: Fetch QR Code transiently with Content-Type check (JSON or image/png)
-      let qrData: any = null;
-      try {
-        const qrRes = await fetchWithTimeout(`${wahaBaseUrl}/api/${sessionName}/auth/qr`, {
-          method: "GET",
-          headers: {
-            ...wahaHeaders,
-            Accept: "application/json, image/png",
-          },
-        });
-
-        if (qrRes.ok) {
-          const contentType = qrRes.headers.get("content-type") || "";
-          if (contentType.includes("application/json")) {
-            const parsed = await qrRes.json();
-            qrData = {
-              mimetype: parsed.mimetype || "image/png",
-              data: parsed.data || parsed.qr || "",
-            };
-          } else if (contentType.includes("image/")) {
-            const arrayBuffer = await qrRes.arrayBuffer();
-            const uint8Array = new Uint8Array(arrayBuffer);
-            let binary = "";
-            const chunkSize = 8192;
-            for (let i = 0; i < uint8Array.length; i += chunkSize) {
-              const chunk = uint8Array.subarray(i, i + chunkSize);
-              binary += String.fromCharCode.apply(null, Array.from(chunk));
-            }
-            const base64 = btoa(binary);
-            qrData = {
-              mimetype: contentType,
-              data: base64,
-            };
-          }
-        }
-      } catch (err) {
-        console.error("WAHA QR Fetch Error");
-      }
-
-      const { error: upsertError } = await dbClient.from("teacher_whatsapp_sessions").upsert(
+    // Helper: update teacher_whatsapp_sessions in database
+    async function updateDbSession(
+      status: string,
+      connectedPhone: string | null = null
+    ) {
+      const now = new Date().toISOString();
+      await dbClient.from("teacher_whatsapp_sessions").upsert(
         {
           teacher_id: teacherId,
           session_name: sessionName,
-          status: "SCAN_QR_CODE",
-          updated_at: new Date().toISOString(),
+          status: normalizeStatus(status),
+          connected_phone: connectedPhone,
+          last_connected_at: isWorkingStatus(status) ? now : null,
+          updated_at: now,
         },
         { onConflict: "teacher_id" }
       );
-
-      if (upsertError) {
-        console.error("Database upsert failed");
-        return new Response(
-          JSON.stringify({ success: false, message: "فشل حفظ حالة الجلسة في قاعدة البيانات" }),
-          { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        );
-      }
-
-      return new Response(
-        JSON.stringify({
-          success: true,
-          status: "SCAN_QR_CODE",
-          session_name: sessionName,
-          qr: qrData
-            ? {
-                mimetype: qrData.mimetype || "image/png",
-                data: qrData.data || "",
-              }
-            : null,
-        }),
-        { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
     }
 
-    // ------------------------------------------------------------------------
+    // =========================================================================
     // ACTION: TEST_WAHA_CONNECTION
-    // ------------------------------------------------------------------------
+    // =========================================================================
     if (action === "TEST_WAHA_CONNECTION") {
       const startTime = Date.now();
-      let reachable = false;
-      let status: number | null = null;
-      let success = false;
-      let sessionStatus = "STOPPED";
+      let serverReachable = false;
+      let sessionExists = false;
+      let sessionStatus = "NOT_FOUND";
       let connectedPhone: string | null = null;
-      let errorMessage: string | null = null;
+      let latencyMs = 0;
+      let wahaHttpStatus: number | null = null;
 
+      // 1. Probe session status
       try {
-        const testRes = await fetchWithTimeout(`${wahaBaseUrl}/api/sessions/${sessionName}`, {
-          method: "GET",
-          headers: wahaHeaders,
-        });
+        const sessionRes = await fetchWithTimeout(
+          `${wahaBaseUrl}/api/sessions/${encodeURIComponent(sessionName)}`,
+          { method: "GET", headers: wahaHeaders },
+          8000
+        );
 
-        status = testRes.status;
-        reachable = true;
+        latencyMs = Date.now() - startTime;
+        serverReachable = true;
+        wahaHttpStatus = sessionRes.status;
 
-        if (testRes.ok) {
-          const sessionData = await testRes.json();
-          sessionStatus = sessionData?.status || "STOPPED";
-          const meId = sessionData?.me?.id || sessionData?.me || null;
-          if (meId && typeof meId === "string") {
-            connectedPhone = meId.split("@")[0].replace(/[^0-9]/g, "");
+        if (sessionRes.ok) {
+          sessionExists = true;
+          const data: any = await readResponseBody(sessionRes);
+          const rawStatus = data?.status || "STOPPED";
+          sessionStatus = normalizeStatus(rawStatus);
+
+          const meId = data?.me?.id || data?.me;
+          if (typeof meId === "string") {
+            connectedPhone = meId.split("@")[0].replace(/\D/g, "");
           }
-          if (sessionStatus === "WORKING" || sessionStatus === "CONNECTED") {
-            success = true;
-          } else {
-            success = false;
-            errorMessage = `جلسة WhatsApp بحالة: ${sessionStatus}`;
-          }
-        } else if (testRes.status === 404) {
+
+          // Keep DB in sync with live WAHA status
+          await updateDbSession(sessionStatus, connectedPhone);
+        } else if (sessionRes.status === 404) {
+          sessionExists = false;
           sessionStatus = "NOT_FOUND";
-          success = false;
-          errorMessage = "جلسة WhatsApp غير موجودة أو لم تقم بربطها بعد";
-        } else if (testRes.status === 401 || testRes.status === 403) {
+        } else if (sessionRes.status === 401 || sessionRes.status === 403) {
+          sessionExists = false;
           sessionStatus = "UNAUTHORIZED";
-          success = false;
-          errorMessage = "خطأ في مصادقة خادم واتساب";
-        } else {
-          sessionStatus = "FAILED";
-          success = false;
-          errorMessage = `استجابة خادم واتساب غير صالحة (${testRes.status})`;
         }
-      } catch (err) {
-        reachable = false;
-        success = false;
-        if (err instanceof Error && err.name === "AbortError") {
-          sessionStatus = "TIMEOUT";
-          errorMessage = "انتهت مهلة الاتصال بالخادم";
-        } else {
+      } catch (_err) {
+        // If session call timed out or failed, test server root ping
+        try {
+          const pingRes = await fetchWithTimeout(
+            `${wahaBaseUrl}/api/sessions`,
+            { method: "GET", headers: wahaHeaders },
+            5000
+          );
+          serverReachable = pingRes.ok || pingRes.status === 401;
+          wahaHttpStatus = pingRes.status;
+        } catch {
+          serverReachable = false;
           sessionStatus = "NETWORK_ERROR";
-          errorMessage = "تعذر الاتصال بالخادم";
         }
       }
 
-      const latencyMs = Date.now() - startTime;
+      const isConnected = isWorkingStatus(sessionStatus);
+      let message = "";
+      if (!serverReachable) {
+        message = "Could not reach WAHA server.";
+      } else if (!sessionExists) {
+        message =
+          "WAHA server is reachable, but this teacher session does not exist yet.";
+      } else if (isConnected) {
+        message = "WAHA session is connected and working.";
+      } else {
+        message = `WAHA session exists with status: ${sessionStatus}.`;
+      }
 
-      return new Response(
-        JSON.stringify({
-          success,
-          reachable,
-          status,
-          session_name: sessionName,
-          session_status: sessionStatus,
-          connected_phone: connectedPhone,
-          latency_ms: latencyMs,
-          message: errorMessage,
-        }),
-        { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
+      return jsonResponse({
+        success: isConnected,
+        reachable: serverReachable,
+        session_exists: sessionExists,
+        status: wahaHttpStatus ?? 0,
+        session_name: sessionName,
+        session_status: sessionStatus,
+        whatsapp_connected: isConnected,
+        connected_phone: connectedPhone,
+        latency_ms: latencyMs,
+        message,
+      });
     }
 
-    // ------------------------------------------------------------------------
-    // ACTION: REQUEST_PAIRING_CODE
-    // ------------------------------------------------------------------------
-    if (action === "REQUEST_PAIRING_CODE") {
-      const phoneNumber = body.phoneNumber;
-      if (!phoneNumber || typeof phoneNumber !== "string") {
-        return new Response(
-          JSON.stringify({ success: false, message: "رقم الهاتف غير صالح" }),
-          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    // =========================================================================
+    // ACTION: START
+    // =========================================================================
+    if (action === "START") {
+      let sessionStatus = "STOPPED";
+      let connectedPhone: string | null = null;
+      let sessionExists = false;
+
+      // Step A: Check existing session in WAHA
+      try {
+        const getSessionRes = await fetchWithTimeout(
+          `${wahaBaseUrl}/api/sessions/${encodeURIComponent(sessionName)}`,
+          { method: "GET", headers: wahaHeaders }
+        );
+
+        if (getSessionRes.status === 404) {
+          // Session does not exist -> create it
+          const createRes = await fetchWithTimeout(
+            `${wahaBaseUrl}/api/sessions`,
+            {
+              method: "POST",
+              headers: wahaHeaders,
+              body: JSON.stringify({ name: sessionName, start: false }),
+            }
+          );
+
+          if (!createRes.ok && createRes.status !== 409) {
+            console.error("WAHA session create failed status:", createRes.status);
+            return jsonResponse(
+              {
+                success: false,
+                reachable: true,
+                session_exists: false,
+                status: "FAILED",
+                message: "Could not create WAHA session",
+              },
+              502
+            );
+          }
+          sessionExists = true;
+          sessionStatus = "STOPPED";
+        } else if (getSessionRes.ok) {
+          sessionExists = true;
+          const data: any = await readResponseBody(getSessionRes);
+          sessionStatus = normalizeStatus(data?.status);
+          const meId = data?.me?.id || data?.me;
+          if (typeof meId === "string") {
+            connectedPhone = meId.split("@")[0].replace(/\D/g, "");
+          }
+        }
+      } catch (err) {
+        console.error("WAHA lookup error:", err);
+        return jsonResponse(
+          {
+            success: false,
+            reachable: false,
+            message: "Could not connect to WAHA server",
+          },
+          502
         );
       }
 
-      let wahaSessionStatus = "STOPPED";
-      try {
-        const getSessionRes = await fetchWithTimeout(`${wahaBaseUrl}/api/sessions/${sessionName}`, {
-          method: "GET",
-          headers: wahaHeaders,
+      // Step B: If already working/connected
+      if (isWorkingStatus(sessionStatus)) {
+        await updateDbSession(sessionStatus, connectedPhone);
+        return jsonResponse({
+          success: true,
+          reachable: true,
+          session_exists: true,
+          status: sessionStatus,
+          session_status: sessionStatus,
+          session_name: sessionName,
+          connected_phone: connectedPhone,
+          qr: null,
+          message: "WhatsApp session is already connected",
         });
+      }
+
+      // Step C: Start session if stopped or not running
+      if (sessionStatus !== "SCAN_QR_CODE" && sessionStatus !== "STARTING") {
+        try {
+          await fetchWithTimeout(
+            `${wahaBaseUrl}/api/sessions/${encodeURIComponent(sessionName)}/start`,
+            { method: "POST", headers: wahaHeaders },
+            12000
+          );
+        } catch (err) {
+          console.warn("WAHA start request notice:", err);
+        }
+      }
+
+      // Step D: Attempt to fetch QR code
+      let qrData: any = null;
+      try {
+        const qrRes = await fetchWithTimeout(
+          `${wahaBaseUrl}/api/${encodeURIComponent(sessionName)}/auth/qr`,
+          {
+            method: "GET",
+            headers: { ...wahaHeaders, Accept: "application/json, image/png" },
+          },
+          8000
+        );
+
+        if (qrRes.ok) {
+          const contentType =
+            qrRes.headers.get("content-type")?.toLowerCase() || "";
+          if (contentType.includes("application/json")) {
+            const parsed: any = await qrRes.json();
+            const qrString = parsed?.data || parsed?.qr || parsed?.value || "";
+            if (qrString) {
+              qrData = {
+                mimetype: parsed?.mimetype || "image/png",
+                data: qrString,
+              };
+            }
+          } else if (contentType.includes("image/")) {
+            const buffer = await qrRes.arrayBuffer();
+            const bytes = new Uint8Array(buffer);
+            let binary = "";
+            const chunkSize = 8192;
+            for (let i = 0; i < bytes.length; i += chunkSize) {
+              binary += String.fromCharCode(
+                ...bytes.subarray(i, i + chunkSize)
+              );
+            }
+            qrData = {
+              mimetype: contentType,
+              data: btoa(binary),
+            };
+          }
+        }
+      } catch (err) {
+        console.warn("WAHA QR fetch notice (may still be generating):", err);
+      }
+
+      // Step E: Save SCAN_QR_CODE state to database
+      await updateDbSession("SCAN_QR_CODE", null);
+
+      // Return success with status SCAN_QR_CODE (even if QR is still generating in background)
+      return jsonResponse({
+        success: true,
+        reachable: true,
+        session_exists: true,
+        status: "SCAN_QR_CODE",
+        session_status: "SCAN_QR_CODE",
+        session_name: sessionName,
+        qr: qrData,
+        message: qrData
+          ? "Scan the QR code with WhatsApp"
+          : "WAHA session started. QR code is being generated, please wait...",
+      });
+    }
+
+    // =========================================================================
+    // ACTION: REQUEST_PAIRING_CODE
+    // =========================================================================
+    if (action === "REQUEST_PAIRING_CODE") {
+      const rawPhone = body.phoneNumber || "";
+      const normalizedPhone = normalizeEgyptianPhone(rawPhone);
+
+      if (!normalizedPhone) {
+        return jsonResponse(
+          { success: false, message: "Invalid phone number provided" },
+          400
+        );
+      }
+
+      // Ensure session exists
+      try {
+        const getSessionRes = await fetchWithTimeout(
+          `${wahaBaseUrl}/api/sessions/${encodeURIComponent(sessionName)}`,
+          { method: "GET", headers: wahaHeaders },
+          5000
+        );
 
         if (getSessionRes.status === 404) {
           await fetchWithTimeout(`${wahaBaseUrl}/api/sessions`, {
             method: "POST",
             headers: wahaHeaders,
-            body: JSON.stringify({ name: sessionName }),
+            body: JSON.stringify({ name: sessionName, start: false }),
           });
-        } else if (getSessionRes.ok) {
-          const sessionData = await getSessionRes.json();
-          wahaSessionStatus = sessionData?.status || "STOPPED";
         }
-      } catch (err) {
-        console.error("WAHA Session Check Error for pairing code");
-      }
+      } catch (_) {}
 
-      if (wahaSessionStatus !== "WORKING" && wahaSessionStatus !== "CONNECTED" && wahaSessionStatus !== "STARTING") {
-        try {
-          await fetchWithTimeout(`${wahaBaseUrl}/api/sessions/${sessionName}/start`, {
+      // Ensure session is started
+      try {
+        await fetchWithTimeout(
+          `${wahaBaseUrl}/api/sessions/${encodeURIComponent(sessionName)}/start`,
+          { method: "POST", headers: wahaHeaders },
+          8000
+        );
+      } catch (_) {}
+
+      // Request pairing code from WAHA with endpoint fallback
+      let pairingRes: Response | null = null;
+      try {
+        pairingRes = await fetchWithTimeout(
+          `${wahaBaseUrl}/api/${encodeURIComponent(sessionName)}/auth/request-code`,
+          {
             method: "POST",
             headers: wahaHeaders,
-          });
-        } catch (err) {
-          console.error("WAHA Session Start Error for pairing code");
-        }
-      }
-
-      try {
-        const pairingRes = await fetchWithTimeout(`${wahaBaseUrl}/api/${sessionName}/auth/request-code`, {
-          method: "POST",
-          headers: wahaHeaders,
-          body: JSON.stringify({ phoneNumber }),
-        });
-
-        if (!pairingRes.ok) {
-          return new Response(
-            JSON.stringify({ success: false, message: "فشل طلب كود الربط من خادم واتساب" }),
-            { status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-          );
-        }
-
-        const pairingData = await pairingRes.json();
-        const code = pairingData?.code;
-
-        if (!code) {
-          return new Response(
-            JSON.stringify({ success: false, message: "تعذر الحصول على كود الربط من الخادم" }),
-            { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-          );
-        }
-
-        return new Response(
-          JSON.stringify({
-            success: true,
-            code: code,
-          }),
-          { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+            body: JSON.stringify({ phoneNumber: normalizedPhone }),
+          },
+          15000
         );
+
+        if (pairingRes.status === 404) {
+          // Fallback to legacy endpoint
+          pairingRes = await fetchWithTimeout(
+            `${wahaBaseUrl}/api/${encodeURIComponent(sessionName)}/request-code`,
+            {
+              method: "POST",
+              headers: wahaHeaders,
+              body: JSON.stringify({ phoneNumber: normalizedPhone }),
+            },
+            15000
+          );
+        }
       } catch (err) {
-        return new Response(
-          JSON.stringify({ success: false, message: "حدث خطأ غير متوقع أثناء طلب كود الربط (انتهت المهلة أو خطأ اتصال)" }),
-          { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        return jsonResponse(
+          {
+            success: false,
+            message:
+              "Connection timed out while requesting pairing code from WAHA",
+          },
+          504
         );
       }
+
+      if (!pairingRes || !pairingRes.ok) {
+        const errData = pairingRes ? await readResponseBody(pairingRes) : null;
+        return jsonResponse(
+          {
+            success: false,
+            message: "WAHA rejected pairing code request",
+            waha_response: errData,
+          },
+          pairingRes ? pairingRes.status : 502
+        );
+      }
+
+      const pairingData: any = await readResponseBody(pairingRes);
+
+      // Normalize pairing code extraction across WAHA versions
+      let code: string | null = null;
+      if (typeof pairingData?.code === "string") {
+        code = pairingData.code.trim();
+      } else if (typeof pairingData?.data?.code === "string") {
+        code = pairingData.data.code.trim();
+      } else if (typeof pairingData?.result?.code === "string") {
+        code = pairingData.result.code.trim();
+      } else if (typeof pairingData?.pairingCode === "string") {
+        code = pairingData.pairingCode.trim();
+      }
+
+      if (!code) {
+        return jsonResponse(
+          {
+            success: false,
+            message: "Pairing code was not found in WAHA response",
+            waha_response: pairingData,
+          },
+          500
+        );
+      }
+
+      await updateDbSession("SCAN_QR_CODE", null);
+
+      return jsonResponse({
+        success: true,
+        code,
+        status: "SCAN_QR_CODE",
+        session_status: "SCAN_QR_CODE",
+        session_name: sessionName,
+        message: "Pairing code generated successfully",
+      });
     }
 
-    // ------------------------------------------------------------------------
+    // =========================================================================
     // ACTION: LOGOUT
-    // ------------------------------------------------------------------------
+    // =========================================================================
     if (action === "LOGOUT") {
       try {
-        await fetchWithTimeout(`${wahaBaseUrl}/api/sessions/${sessionName}/logout`, {
-          method: "POST",
-          headers: wahaHeaders,
-        });
-      } catch (err) {
-        console.error("WAHA Logout Error");
-      }
-
-      const { error: upsertError } = await dbClient.from("teacher_whatsapp_sessions").upsert(
-        {
-          teacher_id: teacherId,
-          session_name: sessionName,
-          status: "DISCONNECTED",
-          connected_phone: null,
-          last_connected_at: null,
-          updated_at: new Date().toISOString(),
-        },
-        { onConflict: "teacher_id" }
-      );
-
-      if (upsertError) {
-        console.error("Database upsert failed");
-        return new Response(
-          JSON.stringify({ success: false, message: "فشل تحديث حالة الجلسة في قاعدة البيانات" }),
-          { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        await fetchWithTimeout(
+          `${wahaBaseUrl}/api/sessions/${encodeURIComponent(sessionName)}/logout`,
+          { method: "POST", headers: wahaHeaders },
+          12000
         );
+      } catch (err) {
+        console.warn("WAHA logout request error:", err);
       }
 
-      return new Response(
-        JSON.stringify({
-          success: true,
-          status: "DISCONNECTED",
-        }),
-        { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
+      await updateDbSession("DISCONNECTED", null);
+
+      return jsonResponse({
+        success: true,
+        status: "DISCONNECTED",
+        session_status: "DISCONNECTED",
+        session_name: sessionName,
+        message: "WhatsApp session disconnected",
+      });
     }
 
-    return new Response(
-      JSON.stringify({ success: false, message: "Invalid or unsupported action" }),
-      { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    return jsonResponse(
+      { success: false, message: `Action not handled: ${action}` },
+      400
     );
   } catch (error) {
-    console.error("Unhandled Edge Function Error");
-    return new Response(
-      JSON.stringify({ success: false, message: "تعذر الاتصال بخدمة واتساب" }),
-      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    console.error("waha-session unhandled error:", error);
+    return jsonResponse(
+      {
+        success: false,
+        message: error instanceof Error ? error.message : "Internal error",
+      },
+      500
     );
   }
 });
