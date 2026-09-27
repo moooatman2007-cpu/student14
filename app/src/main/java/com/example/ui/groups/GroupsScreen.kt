@@ -2,9 +2,12 @@ package com.example.ui.groups
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -19,6 +22,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -39,6 +43,21 @@ fun GroupsScreen(
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     var isStageFilterExpanded by remember { mutableStateOf(false) }
     var isGradeFilterExpanded by remember { mutableStateOf(false) }
+    val snackbarHostState = remember { SnackbarHostState() }
+
+    LaunchedEffect(uiState.actionMessage) {
+        uiState.actionMessage?.let { msg ->
+            snackbarHostState.showSnackbar(msg)
+            viewModel.clearActionMessage()
+        }
+    }
+
+    LaunchedEffect(uiState.errorMessage) {
+        uiState.errorMessage?.let { err ->
+            snackbarHostState.showSnackbar(err)
+            viewModel.clearActionMessage()
+        }
+    }
 
     Scaffold(
         topBar = {
@@ -73,6 +92,18 @@ fun GroupsScreen(
                 )
             )
         },
+        floatingActionButton = {
+            ExtendedFloatingActionButton(
+                onClick = { viewModel.openAddDialog() },
+                containerColor = PrimaryIndigo,
+                contentColor = Color.White,
+                shape = RoundedCornerShape(16.dp),
+                icon = { Icon(Icons.Default.Add, contentDescription = null) },
+                text = { Text("+ إضافة مجموعة", fontWeight = FontWeight.Bold) },
+                modifier = Modifier.testTag("add_group_fab")
+            )
+        },
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         containerColor = MaterialTheme.colorScheme.background,
         modifier = modifier.testTag("groups_screen")
     ) { innerPadding ->
@@ -188,17 +219,22 @@ fun GroupsScreen(
                     EmptyStateView(
                         title = "لا توجد مجموعات حتى الآن",
                         description = "أضف أول مجموعة لبدء تنظيم وتتبع حضور الطلاب بانتظام.",
-                        buttonText = "إضافة مجموعة جديدة",
+                        buttonText = "+ إضافة مجموعة جديدة",
                         onButtonClick = { viewModel.openAddDialog() }
                     )
                 }
             } else {
                 LazyColumn(
                     modifier = Modifier.weight(1f).fillMaxWidth(),
-                    contentPadding = PaddingValues(horizontal = Dimens.Spacing20, vertical = Dimens.Spacing8),
+                    contentPadding = PaddingValues(
+                        start = Dimens.Spacing20,
+                        end = Dimens.Spacing20,
+                        top = Dimens.Spacing8,
+                        bottom = 80.dp // Padding for FAB
+                    ),
                     verticalArrangement = Arrangement.spacedBy(Dimens.Spacing16)
                 ) {
-                    items(uiState.filteredGroups) { group ->
+                    items(uiState.filteredGroups, key = { it.id }) { group ->
                         val studentCount = uiState.groupStudentCounts[group.id] ?: 0
                         val gradeName = uiState.grades.find { it.id == group.gradeId }?.name ?: ""
                         val days = uiState.groupDays[group.id] ?: emptyList()
@@ -208,6 +244,7 @@ fun GroupsScreen(
                             studentCount = studentCount,
                             gradeName = gradeName,
                             onEdit = { viewModel.openEditDialog(group) },
+                            onDelete = { viewModel.requestDeleteGroup(group) },
                             onToggleActive = { viewModel.toggleGroupActive(group) },
                             onStartAttendance = { onStartAttendance(group.id, group.name) }
                         )
@@ -223,9 +260,65 @@ fun GroupsScreen(
                 viewModel = viewModel
             )
         }
+
+        // Delete Confirmation Dialog
+        if (uiState.groupToDelete != null) {
+            val group = uiState.groupToDelete!!
+            AlertDialog(
+                onDismissRequest = { if (!uiState.isDeleting) viewModel.dismissDeleteGroup() },
+                icon = {
+                    Icon(Icons.Default.Delete, contentDescription = null, tint = DangerRed)
+                },
+                title = {
+                    Text(
+                        text = "حذف المجموعة",
+                        style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
+                        textAlign = TextAlign.Center
+                    )
+                },
+                text = {
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        Text(
+                            text = "هل أنت متأكد من حذف مجموعة \"${group.name}\"؟",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = "ملاحظة: إذا كانت المجموعة مرتبطة بطلاب مسجلين أو سجلات حضور سابقة، فسيمنع النظام حذفها للحفاظ على سلامة البيانات ويمكنك إلغاء تفعيلها بدلاً من حذفها.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                },
+                confirmButton = {
+                    Button(
+                        onClick = { viewModel.confirmDeleteGroup() },
+                        enabled = !uiState.isDeleting,
+                        colors = ButtonDefaults.buttonColors(containerColor = DangerRed),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        if (uiState.isDeleting) {
+                            CircularProgressIndicator(color = Color.White, modifier = Modifier.size(16.dp))
+                        } else {
+                            Text("تأكيد الحذف", color = Color.White, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                },
+                dismissButton = {
+                    TextButton(
+                        onClick = { viewModel.dismissDeleteGroup() },
+                        enabled = !uiState.isDeleting
+                    ) {
+                        Text("إلغاء")
+                    }
+                }
+            )
+        }
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun GroupCard(
     group: Group,
@@ -233,6 +326,7 @@ fun GroupCard(
     studentCount: Int,
     gradeName: String,
     onEdit: () -> Unit,
+    onDelete: () -> Unit,
     onToggleActive: () -> Unit,
     onStartAttendance: () -> Unit
 ) {
@@ -243,126 +337,154 @@ fun GroupCard(
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
     ) {
         Column(modifier = Modifier.padding(Dimens.Spacing16)) {
+            // Header Row: Group Name + Status Badge + Action Buttons
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(
+                    modifier = Modifier.weight(1f),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        text = group.name,
+                        style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false)
+                    )
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = if (group.active) EmeraldGreenLight else DangerRedLight,
+                        modifier = Modifier.wrapContentSize()
+                    ) {
+                        Text(
+                            text = if (group.active) "نشطة" else "غير نشطة",
+                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                            color = if (group.active) EmeraldGreen else DangerRed,
+                            maxLines = 1,
+                            softWrap = false,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                        )
+                    }
+                }
+
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(0.dp)
+                ) {
+                    IconButton(onClick = onEdit, modifier = Modifier.testTag("edit_group_btn_${group.id}")) {
+                        Icon(imageVector = Icons.Default.Edit, contentDescription = "تعديل", tint = PrimaryIndigo)
+                    }
+                    IconButton(onClick = onDelete, modifier = Modifier.testTag("delete_group_btn_${group.id}")) {
+                        Icon(imageVector = Icons.Default.Delete, contentDescription = "حذف", tint = DangerRed)
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(4.dp))
+
+            // Grade Name
+            Text(
+                text = gradeName,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+
+            // Group Days (FlowRow to wrap smoothly or Row with scroll)
+            if (days.isNotEmpty()) {
+                Spacer(modifier = Modifier.height(8.dp))
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    days.forEach { day ->
+                        Surface(
+                            shape = RoundedCornerShape(6.dp),
+                            color = PrimaryIndigo.copy(alpha = 0.1f)
+                        ) {
+                            Text(
+                                text = day,
+                                color = PrimaryIndigo,
+                                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                                maxLines = 1,
+                                softWrap = false,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                            )
+                        }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // Details & Attendance Footer
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = group.name,
-                        style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-                    Text(
-                        text = gradeName,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    if (days.isNotEmpty()) {
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Row(
-                            horizontalArrangement = Arrangement.spacedBy(4.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            days.forEach { day ->
-                                Box(
-                                    modifier = Modifier
-                                        .background(PrimaryIndigo.copy(alpha = 0.1f), shape = RoundedCornerShape(4.dp))
-                                        .padding(horizontal = 6.dp, vertical = 2.dp)
-                                    ) {
-                                    Text(
-                                        text = day,
-                                        color = PrimaryIndigo,
-                                        fontSize = 10.sp,
-                                        fontWeight = FontWeight.Bold
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-                
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Dimens.Spacing8)) {
-                    Button(
-                        onClick = onStartAttendance,
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = EmeraldGreen,
-                            contentColor = Color.White
-                        ),
-                        shape = RoundedCornerShape(10.dp),
-                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
-                        modifier = Modifier.testTag("attendance_group_btn_${group.id}")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.CheckCircle,
-                            contentDescription = "حضور المجموعة",
-                            modifier = Modifier.size(16.dp)
-                        )
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text(
-                            text = "حضور المجموعة",
-                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold)
-                        )
-                    }
-                    IconButton(onClick = onEdit, modifier = Modifier.testTag("edit_group_btn_${group.id}")) {
-                        Icon(imageVector = Icons.Default.Edit, contentDescription = "تعديل", tint = PrimaryIndigo)
-                    }
-                    Switch(
-                        checked = group.active,
-                        onCheckedChange = { onToggleActive() },
-                        colors = SwitchDefaults.colors(
-                            checkedThumbColor = Color.White,
-                            checkedTrackColor = EmeraldGreen,
-                            uncheckedThumbColor = Color.White,
-                            uncheckedTrackColor = DangerRed
-                        ),
-                        modifier = Modifier.testTag("toggle_active_switch_${group.id}")
-                    )
-                }
-            }
-
-            Spacer(modifier = Modifier.height(12.dp))
-
-            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-
-            Spacer(modifier = Modifier.height(12.dp))
-
-            // Details
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Column {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(imageVector = Icons.Default.AccessTime, contentDescription = null, tint = PrimaryIndigo, modifier = Modifier.size(16.dp))
                         Spacer(modifier = Modifier.width(4.dp))
-                        Text(text = "${group.startTime} - ${group.endTime}", style = MaterialTheme.typography.bodyMedium)
+                        Text(text = "${group.startTime} - ${group.endTime}", style = MaterialTheme.typography.bodyMedium, maxLines = 1)
                     }
                     if (!group.location.isNullOrBlank()) {
                         Spacer(modifier = Modifier.height(4.dp))
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Icon(imageVector = Icons.Default.LocationOn, contentDescription = null, tint = WarmAmber, modifier = Modifier.size(16.dp))
                             Spacer(modifier = Modifier.width(4.dp))
-                            Text(text = group.location!!, style = MaterialTheme.typography.bodyMedium)
+                            Text(text = group.location, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(imageVector = Icons.Default.People, contentDescription = null, tint = PrimaryIndigo, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(text = "$studentCount طالب مسجل", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
+                        if (group.capacity != null) {
+                            Text(
+                                text = " (السعة: ${group.capacity})",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
                         }
                     }
                 }
 
-                Column(horizontalAlignment = Alignment.End) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(imageVector = Icons.Default.People, contentDescription = null, tint = PrimaryIndigo, modifier = Modifier.size(16.dp))
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text(text = "$studentCount طالب", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
-                    }
-                    if (group.capacity != null) {
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = "السعة: ${group.capacity}",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
+                Spacer(modifier = Modifier.width(8.dp))
+
+                Button(
+                    onClick = onStartAttendance,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = EmeraldGreen,
+                        contentColor = Color.White
+                    ),
+                    shape = RoundedCornerShape(12.dp),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+                    modifier = Modifier.testTag("attendance_group_btn_${group.id}")
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.CheckCircle,
+                        contentDescription = "حضور المجموعة",
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "تسجيل الحضور",
+                        style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                        maxLines = 1,
+                        softWrap = false
+                    )
                 }
             }
         }
@@ -376,10 +498,10 @@ fun AddEditGroupDialog(
     viewModel: GroupsViewModel
 ) {
     AlertDialog(
-        onDismissRequest = { viewModel.closeDialog() },
+        onDismissRequest = { if (!uiState.isSaving) viewModel.closeDialog() },
         title = {
             Text(
-                text = if (uiState.editingGroup == null) "إضافة مجموعة جديدة" else "تعديل المجموعة",
+                text = if (uiState.editingGroup == null) "إضافة مجموعة جديدة" else "تعديل بيانات المجموعة",
                 style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
                 textAlign = TextAlign.Right,
                 modifier = Modifier.fillMaxWidth()
@@ -392,20 +514,33 @@ fun AddEditGroupDialog(
             ) {
                 if (uiState.formError != null) {
                     item {
-                        Text(
-                            text = uiState.formError,
-                            color = DangerRed,
-                            style = MaterialTheme.typography.bodySmall,
-                            modifier = Modifier.padding(bottom = 8.dp)
-                        )
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = DangerRedLight,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(Icons.Default.ErrorOutline, contentDescription = null, tint = DangerRed, modifier = Modifier.size(18.dp))
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = uiState.formError,
+                                    color = DangerRed,
+                                    style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold)
+                                )
+                            }
+                        }
                     }
                 }
 
+                // Group Name
                 item {
                     OutlinedTextField(
                         value = uiState.formName,
                         onValueChange = viewModel::onFormNameChange,
-                        label = { Text("اسم المجموعة") },
+                        label = { Text("اسم المجموعة (مثال: السبت 1-2)") },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth().testTag("group_name_field")
                     )
@@ -416,7 +551,7 @@ fun AddEditGroupDialog(
                     var isExpanded by remember { mutableStateOf(false) }
                     Box(modifier = Modifier.fillMaxWidth()) {
                         OutlinedTextField(
-                            value = uiState.grades.find { it.id == uiState.formGradeId }?.name ?: "اختر الصف",
+                            value = uiState.grades.find { it.id == uiState.formGradeId }?.name ?: "اختر الصف الدراسي",
                             onValueChange = {},
                             label = { Text("الصف الدراسي") },
                             readOnly = true,
@@ -454,26 +589,28 @@ fun AddEditGroupDialog(
                         )
                         val weekdays = listOf("السبت", "الأحد", "الاثنين", "الثلاثاء", "الأربعاء", "الخميس", "الجمعة")
                         Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
                             weekdays.forEach { day ->
                                 val isSelected = uiState.formDays.contains(day)
-                                Box(
-                                    contentAlignment = Alignment.Center,
+                                Surface(
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = if (isSelected) PrimaryIndigo else MaterialTheme.colorScheme.surfaceVariant,
                                     modifier = Modifier
-                                        .weight(1f)
-                                        .height(36.dp)
                                         .clip(RoundedCornerShape(8.dp))
-                                        .background(if (isSelected) PrimaryIndigo else MaterialTheme.colorScheme.surfaceVariant)
                                         .clickable { viewModel.onFormDayToggle(day) }
                                         .testTag("day_toggle_$day")
                                 ) {
                                     Text(
-                                        text = day.take(2),
+                                        text = day,
                                         color = if (isSelected) Color.White else MaterialTheme.colorScheme.onSurfaceVariant,
-                                        fontSize = 11.sp,
-                                        fontWeight = FontWeight.Bold
+                                        style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                                        maxLines = 1,
+                                        softWrap = false,
+                                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
                                     )
                                 }
                             }
@@ -490,36 +627,75 @@ fun AddEditGroupDialog(
                         OutlinedTextField(
                             value = uiState.formStartTime,
                             onValueChange = viewModel::onFormStartTimeChange,
-                            label = { Text("وقت البدء") },
+                            label = { Text("وقت البدء (مثال: 13:00)") },
+                            singleLine = true,
                             modifier = Modifier.weight(1f).testTag("start_time_field")
                         )
                         OutlinedTextField(
                             value = uiState.formEndTime,
                             onValueChange = viewModel::onFormEndTimeChange,
-                            label = { Text("وقت الانتهاء") },
+                            label = { Text("وقت الانتهاء (مثال: 14:00)") },
+                            singleLine = true,
                             modifier = Modifier.weight(1f).testTag("end_time_field")
                         )
                     }
                 }
 
+                // Capacity
                 item {
                     OutlinedTextField(
                         value = uiState.formCapacity,
                         onValueChange = viewModel::onFormCapacityChange,
-                        label = { Text("السعة (اختياري)") },
+                        label = { Text("السعة القصوى للطلاب (اختياري)") },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth().testTag("capacity_field")
                     )
                 }
 
+                // Location
                 item {
                     OutlinedTextField(
                         value = uiState.formLocation,
                         onValueChange = viewModel::onFormLocationChange,
-                        label = { Text("الموقع (اختياري)") },
+                        label = { Text("المكان / القاعة (اختياري)") },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth().testTag("location_field")
                     )
+                }
+
+                // Active toggle switch
+                item {
+                    Card(
+                        shape = RoundedCornerShape(12.dp),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column {
+                                Text("حالة المجموعة", style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold))
+                                Text(
+                                    text = if (uiState.formActive) "المجموعة مفعلة وتظهر في الحضور" else "المجموعة معطلة",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Switch(
+                                checked = uiState.formActive,
+                                onCheckedChange = viewModel::onFormActiveChange,
+                                colors = SwitchDefaults.colors(
+                                    checkedThumbColor = Color.White,
+                                    checkedTrackColor = EmeraldGreen,
+                                    uncheckedThumbColor = Color.White,
+                                    uncheckedTrackColor = DangerRed
+                                ),
+                                modifier = Modifier.testTag("form_active_switch")
+                            )
+                        }
+                    }
                 }
             }
         },
@@ -534,12 +710,15 @@ fun AddEditGroupDialog(
                 if (uiState.isSaving) {
                     CircularProgressIndicator(color = Color.White, modifier = Modifier.size(16.dp))
                 } else {
-                    Text("حفظ")
+                    Text(if (uiState.editingGroup == null) "إنشاء المجموعة" else "حفظ التعديلات", fontWeight = FontWeight.Bold)
                 }
             }
         },
         dismissButton = {
-            TextButton(onClick = { viewModel.closeDialog() }) {
+            TextButton(
+                onClick = { viewModel.closeDialog() },
+                enabled = !uiState.isSaving
+            ) {
                 Text("إلغاء")
             }
         }

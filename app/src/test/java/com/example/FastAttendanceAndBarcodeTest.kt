@@ -503,12 +503,13 @@ class FastAttendanceAndBarcodeTest {
             override fun getAttendanceForStudentByMonth(studentId: String, year: Int, month: Int): Flow<List<Attendance>> = flowOf(emptyList())
             override suspend fun getAttendanceSummaryForStudent(studentId: String, year: Int, month: Int): AttendanceSummary = AttendanceSummary()
             override suspend fun getTodayAttendanceCount(): Pair<Int, Int> = Pair(0, 0)
-            override suspend fun recordOrUpdateAttendance(studentId: String, date: String, status: AttendanceStatus, note: String?): Result<Attendance> {
+            override suspend fun recordOrUpdateAttendance(studentId: String, date: String, status: AttendanceStatus, note: String?, groupId: String?): Result<Attendance> {
                 return Result.failure(Exception("Network socket timeout"))
             }
             override suspend fun recordBatchAttendance(
                 date: String,
-                records: List<com.example.core.model.BatchAttendanceItemDto>
+                records: List<com.example.core.model.BatchAttendanceItemDto>,
+                groupId: String?
             ): Result<com.example.core.model.BatchAttendanceResult> {
                 return Result.failure(Exception("Network socket timeout"))
             }
@@ -565,20 +566,21 @@ class FastAttendanceAndBarcodeTest {
             override fun getAttendanceForStudentByMonth(studentId: String, year: Int, month: Int): Flow<List<Attendance>> = flowOf(emptyList())
             override suspend fun getAttendanceSummaryForStudent(studentId: String, year: Int, month: Int): AttendanceSummary = AttendanceSummary()
             override suspend fun getTodayAttendanceCount(): Pair<Int, Int> = Pair(0, 0)
-            override suspend fun recordOrUpdateAttendance(studentId: String, date: String, status: AttendanceStatus, note: String?): Result<Attendance> {
+            override suspend fun recordOrUpdateAttendance(studentId: String, date: String, status: AttendanceStatus, note: String?, groupId: String?): Result<Attendance> {
                 if (shouldFail) {
                     return Result.failure(Exception("Network error"))
                 }
-                return attendanceRepository.recordOrUpdateAttendance(studentId, date, status, note)
+                return attendanceRepository.recordOrUpdateAttendance(studentId, date, status, note, groupId)
             }
             override suspend fun recordBatchAttendance(
                 date: String,
-                records: List<com.example.core.model.BatchAttendanceItemDto>
+                records: List<com.example.core.model.BatchAttendanceItemDto>,
+                groupId: String?
             ): Result<com.example.core.model.BatchAttendanceResult> {
                 if (shouldFail) {
                     return Result.failure(Exception("Network error"))
                 }
-                return attendanceRepository.recordBatchAttendance(date, records)
+                return attendanceRepository.recordBatchAttendance(date, records, groupId)
             }
             override suspend fun deleteAttendance(attendanceId: String): Result<Unit> = Result.success(Unit)
             override suspend fun getAttendanceByDate(studentId: String, date: String): Attendance? = attendanceRepository.getAttendanceByDate(studentId, date)

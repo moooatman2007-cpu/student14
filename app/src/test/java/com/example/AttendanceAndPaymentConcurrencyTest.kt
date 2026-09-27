@@ -264,12 +264,13 @@ class AttendanceAndPaymentConcurrencyTest {
                 studentId: String,
                 date: String,
                 status: AttendanceStatus,
-                note: String?
+                note: String?,
+                groupId: String?
             ): Result<Attendance> {
                 if (attempts.incrementAndGet() == 1) {
                     return Result.failure(Exception("Network timeout simulation"))
                 }
-                return baseRepo.recordOrUpdateAttendance(studentId, date, status, note)
+                return baseRepo.recordOrUpdateAttendance(studentId, date, status, note, groupId)
             }
         }
 

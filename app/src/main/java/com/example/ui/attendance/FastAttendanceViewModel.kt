@@ -58,6 +58,8 @@ data class FastAttendanceUiState(
     val selectedGroupId: String? = null,
     val groupName: String? = null,
     val grades: List<Grade> = emptyList(),
+    val baseGroupStudents: List<Student> = emptyList(),
+    val extraSessionStudents: List<Student> = emptyList(),
     val allStudentsInScope: List<Student> = emptyList(),
     val filteredStudents: List<Student> = emptyList(),
     val presentStudentIds: Set<String> = emptySet(),
@@ -72,7 +74,8 @@ data class FastAttendanceUiState(
     val errorMessage: String? = null,
     val isScannerActive: Boolean = false,
     val scanFeedback: ScanFeedback? = null,
-    val recentScannedStudents: List<Student> = emptyList()
+    val recentScannedStudents: List<Student> = emptyList(),
+    val isAddStudentDialogOpen: Boolean = false
 )
 
 class FastAttendanceViewModel(
@@ -96,6 +99,41 @@ class FastAttendanceViewModel(
     init {
         loadData()
         loadMonthlyPayments()
+        loadExistingAttendance()
+    }
+
+    fun loadExistingAttendance() {
+        viewModelScope.launch {
+            val state = _uiState.value
+            val date = state.currentDate
+            val groupId = state.selectedGroupId
+            try {
+                val records = attendanceRepository.getAttendanceForDateAndGroup(date, groupId)
+                val loadedPresent = records.filter { it.status == AttendanceStatus.PRESENT || it.status == AttendanceStatus.LATE }
+                    .map { it.studentId }
+                    .toSet()
+
+                val allScopeIds = state.allStudentsInScope.map { it.studentId }.toSet()
+                val extraFromDb = records.filter { !allScopeIds.contains(it.studentId) }
+                    .mapNotNull { rec -> allStudentsList.find { it.studentId == rec.studentId } }
+
+                _uiState.update { currentState ->
+                    val combinedPresent = currentState.presentStudentIds + loadedPresent
+                    val combinedExtra = (currentState.extraSessionStudents + extraFromDb).distinctBy { it.studentId }
+                    val combinedScope = (currentState.baseGroupStudents + combinedExtra).distinctBy { it.studentId }
+                    currentState.copy(
+                        presentStudentIds = combinedPresent,
+                        extraSessionStudents = combinedExtra,
+                        allStudentsInScope = combinedScope
+                    )
+                }
+                applyFilters()
+            } catch (e: Exception) {
+                if (BuildConfig.DEBUG) {
+                    android.util.Log.e("FastAttendanceVM", "Failed to load existing attendance", e)
+                }
+            }
+        }
     }
 
     fun setInitialGradeId(gradeId: String?) {
@@ -104,6 +142,7 @@ class FastAttendanceViewModel(
             val currentGroupId = _uiState.value.selectedGroupId
             updateLookupMaps(allStudentsList, gradeId, currentGroupId)
             applyFilters()
+            loadExistingAttendance()
         }
     }
 
@@ -139,16 +178,19 @@ class FastAttendanceViewModel(
             val currentGradeId = _uiState.value.selectedGradeId
             updateLookupMaps(allStudentsList, currentGradeId, groupId)
             applyFilters()
+            loadExistingAttendance()
         }
     }
 
     private fun updateLookupMaps(activeStudents: List<Student>, selectedGradeId: String?, selectedGroupId: String?) {
         studentCodeMap = activeStudents.associateBy { it.studentCode.trim().lowercase() }
-        val scope = when {
+        val base = when {
             selectedGroupId != null -> activeStudents.filter { it.groupId == selectedGroupId }
             selectedGradeId != null -> activeStudents.filter { it.gradeId == selectedGradeId }
             else -> activeStudents
         }
+        val extra = _uiState.value.extraSessionStudents
+        val scope = (base + extra).distinctBy { it.studentId }
         inScopeStudentIdsSet = scope.mapTo(HashSet()) { it.studentId }
     }
 
@@ -171,11 +213,13 @@ class FastAttendanceViewModel(
                 val currentGroupId = _uiState.value.selectedGroupId
                 updateLookupMaps(activeStudents, currentGradeId, currentGroupId)
 
-                val scope = when {
+                val base = when {
                     currentGroupId != null -> activeStudents.filter { it.groupId == currentGroupId }
                     currentGradeId != null -> activeStudents.filter { it.gradeId == currentGradeId }
                     else -> activeStudents
                 }
+                val extra = _uiState.value.extraSessionStudents
+                val scope = (base + extra).distinctBy { it.studentId }
 
                 val currentPayments = _uiState.value.paymentsMap
                 val paid = scope.count { currentPayments[it.studentId]?.isPaid == true }
@@ -184,6 +228,7 @@ class FastAttendanceViewModel(
                 _uiState.update { state ->
                     state.copy(
                         grades = gradesList,
+                        baseGroupStudents = base,
                         allStudentsInScope = scope,
                         paidCount = paid,
                         unpaidCount = unpaid
@@ -317,6 +362,7 @@ class FastAttendanceViewModel(
             )
         }
         applyFilters()
+        loadExistingAttendance()
     }
 
     fun toggleStudentPresent(studentId: String) {
@@ -367,25 +413,7 @@ class FastAttendanceViewModel(
             return
         }
 
-        // Group or Grade isolation check
-        if (state.selectedGroupId != null && foundGlobalStudent.groupId != state.selectedGroupId) {
-            updateScanFeedback(ScanFeedback(
-                student = foundGlobalStudent,
-                type = ScanResultType.WRONG_GROUP,
-                rawCode = code
-            ))
-            return
-        }
-        if (state.selectedGroupId == null && state.selectedGradeId != null && foundGlobalStudent.gradeId != state.selectedGradeId) {
-            updateScanFeedback(ScanFeedback(
-                student = foundGlobalStudent,
-                type = ScanResultType.WRONG_GROUP,
-                rawCode = code
-            ))
-            return
-        }
-
-        // O(1) Instant duplicate check
+        // Check if student is already marked present in this session
         if (state.presentStudentIds.contains(foundGlobalStudent.studentId)) {
             updateScanFeedback(ScanFeedback(
                 student = foundGlobalStudent,
@@ -393,6 +421,16 @@ class FastAttendanceViewModel(
                 rawCode = code
             ))
             return
+        }
+
+        // Guest student from another group: allow and add to extraSessionStudents without altering primary group
+        val isDifferentGroup = state.selectedGroupId != null && foundGlobalStudent.groupId != state.selectedGroupId
+        val alreadyInScope = state.allStudentsInScope.any { it.studentId == foundGlobalStudent.studentId }
+
+        val updatedExtra = if (isDifferentGroup && !alreadyInScope) {
+            state.extraSessionStudents + foundGlobalStudent
+        } else {
+            state.extraSessionStudents
         }
 
         // Successfully mark present
@@ -403,16 +441,63 @@ class FastAttendanceViewModel(
 
         _uiState.update {
             it.copy(
+                extraSessionStudents = updatedExtra,
                 presentStudentIds = updatedPresent,
                 recentScannedStudents = updatedRecent
             )
         }
+        applyFilters()
         
         updateScanFeedback(ScanFeedback(
             student = foundGlobalStudent,
             type = ScanResultType.SUCCESS_PRESENT,
             rawCode = code
         ))
+    }
+
+    fun addStudentToCurrentSession(studentId: String) {
+        val student = allStudentsList.find { it.studentId == studentId } ?: return
+
+        // Verify teacher ownership
+        val authTeacherId = com.example.data.SupabaseClientProvider.mockTeacherId
+            ?: try { com.example.data.SupabaseClientProvider.client.auth.currentUserOrNull()?.id } catch (_: Exception) { null }
+        if (authTeacherId != null && !student.teacherId.isNullOrBlank() && student.teacherId != authTeacherId) {
+            _uiState.update { it.copy(errorMessage = "لا يمكن إضافة طالب غير تابع لك.") }
+            return
+        }
+
+        val currentState = _uiState.value
+        val alreadyInScope = currentState.allStudentsInScope.any { it.studentId == studentId }
+
+        val updatedExtra = if (!alreadyInScope) {
+            currentState.extraSessionStudents + student
+        } else {
+            currentState.extraSessionStudents
+        }
+
+        val updatedPresent = currentState.presentStudentIds + studentId
+
+        _uiState.update { state ->
+            state.copy(
+                extraSessionStudents = updatedExtra,
+                presentStudentIds = updatedPresent,
+                isAddStudentDialogOpen = false
+            )
+        }
+        applyFilters()
+    }
+
+    fun openAddStudentDialog() {
+        _uiState.update { it.copy(isAddStudentDialogOpen = true) }
+    }
+
+    fun closeAddStudentDialog() {
+        _uiState.update { it.copy(isAddStudentDialogOpen = false) }
+    }
+
+    fun getAllAvailableStudentsForAdd(): List<Student> {
+        val inScopeIds = _uiState.value.allStudentsInScope.map { it.studentId }.toSet()
+        return allStudentsList.filterNot { inScopeIds.contains(it.studentId) }
     }
 
     private fun updateScanFeedback(feedback: ScanFeedback) {
@@ -432,11 +517,13 @@ class FastAttendanceViewModel(
     private fun applyFilters() {
         _uiState.update { state ->
             val query = state.searchQuery.trim().lowercase()
-            val scope = when {
+            val base = when {
                 state.selectedGroupId != null -> allStudentsList.filter { it.groupId == state.selectedGroupId }
                 state.selectedGradeId != null -> allStudentsList.filter { it.gradeId == state.selectedGradeId }
                 else -> allStudentsList
             }
+            val extra = state.extraSessionStudents
+            val scope = (base + extra).distinctBy { it.studentId }
 
             val filtered = scope.filter { student ->
                 val matchesQuery = query.isEmpty() ||
@@ -449,6 +536,7 @@ class FastAttendanceViewModel(
             val unpaid = (scope.size - paid).coerceAtLeast(0)
 
             state.copy(
+                baseGroupStudents = base,
                 allStudentsInScope = scope,
                 filteredStudents = filtered,
                 paidCount = paid,
@@ -472,23 +560,66 @@ class FastAttendanceViewModel(
             try {
                 val date = currentState.currentDate
                 val presentIds = currentState.presentStudentIds
+                val currentGroupId = currentState.selectedGroupId
+                val baseStudents = currentState.baseGroupStudents
+                val extraStudents = currentState.extraSessionStudents
 
-                val records = scopeStudents.map { student ->
-                    val status = if (presentIds.contains(student.studentId)) {
-                        AttendanceStatus.PRESENT
-                    } else {
-                        AttendanceStatus.ABSENT
+                val records = mutableListOf<BatchAttendanceItemDto>()
+
+                if (currentGroupId != null) {
+                    // 1. Base group students:
+                    // If PRESENT -> PRESENT
+                    // If NOT present -> ABSENT
+                    for (student in baseStudents) {
+                        val status = if (presentIds.contains(student.studentId)) {
+                            AttendanceStatus.PRESENT
+                        } else {
+                            AttendanceStatus.ABSENT
+                        }
+                        records.add(
+                            BatchAttendanceItemDto(
+                                studentId = student.studentId,
+                                status = status.name,
+                                note = null
+                            )
+                        )
                     }
-                    BatchAttendanceItemDto(
-                        studentId = student.studentId,
-                        status = status.name,
-                        note = null
-                    )
+
+                    // 2. Extra/Guest students:
+                    // If PRESENT -> PRESENT in this group
+                    // If NOT present -> DO NOT record ABSENT!
+                    for (student in extraStudents) {
+                        if (presentIds.contains(student.studentId)) {
+                            records.add(
+                                BatchAttendanceItemDto(
+                                    studentId = student.studentId,
+                                    status = AttendanceStatus.PRESENT.name,
+                                    note = "طالب ضيف من مجموعة أخرى"
+                                )
+                            )
+                        }
+                    }
+                } else {
+                    for (student in scopeStudents) {
+                        val status = if (presentIds.contains(student.studentId)) {
+                            AttendanceStatus.PRESENT
+                        } else {
+                            AttendanceStatus.ABSENT
+                        }
+                        records.add(
+                            BatchAttendanceItemDto(
+                                studentId = student.studentId,
+                                status = status.name,
+                                note = null
+                            )
+                        )
+                    }
                 }
 
                 val result = attendanceRepository.recordBatchAttendance(
                     date = date,
-                    records = records
+                    records = records,
+                    groupId = currentGroupId
                 )
 
                 if (result.isSuccess) {
@@ -497,9 +628,9 @@ class FastAttendanceViewModel(
                         it.copy(
                             isSaving = false,
                             saveSummary = FastAttendanceSummary(
-                                presentCount = summary?.presentCount ?: 0,
-                                absentCount = summary?.absentCount ?: 0,
-                                totalCount = summary?.total ?: scopeStudents.size,
+                                presentCount = summary?.presentCount ?: records.count { r -> r.status == AttendanceStatus.PRESENT.name },
+                                absentCount = summary?.absentCount ?: records.count { r -> r.status == AttendanceStatus.ABSENT.name },
+                                totalCount = summary?.total ?: records.size,
                                 date = date
                             )
                         )
@@ -558,6 +689,7 @@ class FastAttendanceViewModel(
                 unpaidCount = unpaid
             )
         }
+        loadExistingAttendance()
     }
 
     fun clearErrorMessage() {

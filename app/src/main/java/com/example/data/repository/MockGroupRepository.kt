@@ -48,10 +48,24 @@ class MockGroupRepository(
         return Result.success(group)
     }
 
+    override suspend fun deleteGroup(teacherId: String, groupId: String): Result<Unit> {
+        _groups.update { list ->
+            list.filterNot { it.id == groupId && it.teacherId == teacherId }
+        }
+        _groupDays.update { list ->
+            list.filterNot { it.groupId == groupId && it.teacherId == teacherId }
+        }
+        return Result.success(Unit)
+    }
+
     override suspend fun deactivateGroup(teacherId: String, groupId: String): Result<Unit> {
         _groups.update { list ->
             list.map { if (it.id == groupId && it.teacherId == teacherId) it.copy(active = false) else it }
         }
+        return Result.success(Unit)
+    }
+
+    override suspend fun refreshGroups(teacherId: String): Result<Unit> {
         return Result.success(Unit)
     }
 

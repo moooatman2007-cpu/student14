@@ -82,6 +82,25 @@ class AddEditStudentViewModel(
         }
     }
 
+    fun initialize(studentId: String?, gradeId: String?) {
+        if (!studentId.isNullOrBlank()) {
+            if (_uiState.value.studentId != studentId || !_uiState.value.isEditMode) {
+                _uiState.update {
+                    it.copy(
+                        isEditMode = true,
+                        studentId = studentId
+                    )
+                }
+                loadExistingStudent(studentId)
+            }
+        } else if (!gradeId.isNullOrBlank()) {
+            if (_uiState.value.selectedGradeId.isBlank()) {
+                _uiState.update { it.copy(selectedGradeId = gradeId) }
+                loadGroups(gradeId, null)
+            }
+        }
+    }
+
     private fun loadGrades() {
         viewModelScope.launch {
             gradeRepository.refreshGrades()
@@ -153,6 +172,8 @@ class AddEditStudentViewModel(
                 _uiState.update { current ->
                     val combinedGrades = buildCombinedGradesList(current.grades, previousStageGrade)
                     current.copy(
+                        isEditMode = true,
+                        studentId = student.studentId,
                         fullName = student.fullName,
                         selectedGradeId = student.gradeId,
                         parentPhone = student.parentPhone,

@@ -100,6 +100,7 @@ fun HomeScreen(
     onNavigateToBarcodes: () -> Unit = {},
     onNavigateToStartLesson: () -> Unit = {},
     onNavigateToStudentDetail: (String) -> Unit = {},
+    onNavigateToGroups: () -> Unit = {},
     viewModel: HomeViewModel = viewModel(),
     monitoringViewModel: SystemMonitoringViewModel = viewModel(),
     modifier: Modifier = Modifier
@@ -397,14 +398,47 @@ fun HomeScreen(
             }
 
             // 4.b Today's Groups Scheduled Section
-            if (uiState.todayGroups.isNotEmpty()) {
-                item {
-                    Column(verticalArrangement = Arrangement.spacedBy(Dimens.Spacing12)) {
+            item {
+                Column(verticalArrangement = Arrangement.spacedBy(Dimens.Spacing12)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
                         Text(
-                            text = "📅 مجموعات اليوم",
+                            text = if (uiState.todayGroups.isNotEmpty()) "📅 مجموعات اليوم" else "📅 المجموعات الدراسية",
                             style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
                             color = MaterialTheme.colorScheme.onSurface
                         )
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = PrimaryIndigoLight,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable { onNavigateToGroups() }
+                                .testTag("home_view_all_groups_btn")
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                            ) {
+                                Text(
+                                    text = "إدارة المجموعات",
+                                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                                    color = PrimaryIndigo
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Icon(
+                                    imageVector = Icons.Default.Groups,
+                                    contentDescription = null,
+                                    tint = PrimaryIndigo,
+                                    modifier = Modifier.size(14.dp)
+                                )
+                            }
+                        }
+                    }
+
+                    if (uiState.todayGroups.isNotEmpty()) {
                         uiState.todayGroups.forEach { tg ->
                             Card(
                                 modifier = Modifier

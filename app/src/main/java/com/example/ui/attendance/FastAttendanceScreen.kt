@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -23,9 +24,11 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Clear
+import androidx.compose.material.icons.filled.PersonAdd
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -39,6 +42,7 @@ import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
@@ -50,7 +54,9 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -73,6 +79,8 @@ import com.example.ui.theme.EmeraldGreen
 import com.example.ui.theme.EmeraldGreenLight
 import com.example.ui.theme.PrimaryIndigo
 import com.example.ui.theme.PrimaryIndigoLight
+import com.example.ui.theme.WarmAmber
+import com.example.ui.theme.WarmAmberLight
 
 @OptIn(ExperimentalMaterial3Api::class, com.google.accompanist.permissions.ExperimentalPermissionsApi::class)
 @Composable
@@ -425,6 +433,24 @@ fun FastAttendanceScreen(
                 }
             }
 
+            if (uiState.selectedGroupId != null) {
+                OutlinedButton(
+                    onClick = { viewModel.openAddStudentDialog() },
+                    shape = RoundedCornerShape(12.dp),
+                    colors = ButtonDefaults.outlinedButtonColors(
+                        contentColor = PrimaryIndigo
+                    ),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = Dimens.Spacing16, vertical = Dimens.Spacing4)
+                        .testTag("fast_attendance_add_student_button")
+                ) {
+                    Icon(Icons.Default.PersonAdd, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("إضافة طالب من مجموعة أخرى للجلسة", fontWeight = FontWeight.Bold)
+                }
+            }
+
             if (uiState.isScannerActive) {
                 // Barcode Camera Section
                 Column(
@@ -543,7 +569,7 @@ fun FastAttendanceScreen(
 
                                 Column(modifier = Modifier.weight(1f)) {
                                     val feedbackStudentPaid = feedback.student?.let { uiState.paymentsMap[it.studentId]?.isPaid } ?: false
-                                    val paymentStatusText = if (feedbackStudentPaid) "🟢 تم الدفع" else "🔴 لم يدفع"
+                                    val paymentStatusText = if (feedbackStudentPaid) "💰 مدفوع" else "⚠️ لم يدفع"
 
                                     Text(
                                         text = when (feedback.type) {
@@ -731,12 +757,14 @@ fun FastAttendanceScreen(
                         val isPresent = uiState.presentStudentIds.contains(student.studentId)
                         val isPaid = uiState.paymentsMap[student.studentId]?.isPaid ?: false
                         val gradeName = gradeMap[student.gradeId] ?: ""
+                        val isGuest = uiState.selectedGroupId != null && student.groupId != uiState.selectedGroupId
 
                         FastAttendanceStudentRow(
                             student = student,
                             gradeName = gradeName,
                             isPresent = isPresent,
                             isPaid = isPaid,
+                            isGuest = isGuest,
                             onToggle = { viewModel.toggleStudentPresent(student.studentId) },
                             onTogglePayment = { viewModel.togglePaymentStatus(student.studentId) }
                         )
@@ -825,6 +853,20 @@ fun FastAttendanceScreen(
             }
         )
     }
+
+    if (uiState.isAddStudentDialogOpen) {
+        val availableStudents = remember(uiState.allStudentsInScope) {
+            viewModel.getAllAvailableStudentsForAdd()
+        }
+        AddStudentToSessionDialog(
+            availableStudents = availableStudents,
+            gradeMap = gradeMap,
+            onDismiss = { viewModel.closeAddStudentDialog() },
+            onStudentSelected = { studentId ->
+                viewModel.addStudentToCurrentSession(studentId)
+            }
+        )
+    }
 }
 
 @Composable
@@ -833,6 +875,7 @@ private fun FastAttendanceStudentRow(
     gradeName: String,
     isPresent: Boolean,
     isPaid: Boolean,
+    isGuest: Boolean = false,
     onToggle: () -> Unit,
     onTogglePayment: () -> Unit
 ) {
@@ -884,13 +927,29 @@ private fun FastAttendanceStudentRow(
                 Spacer(modifier = Modifier.width(Dimens.Spacing12))
 
                 Column {
-                    Text(
-                        text = student.fullName,
-                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
-                        color = MaterialTheme.colorScheme.onSurface,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = student.fullName,
+                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
+                            color = MaterialTheme.colorScheme.onSurface,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        if (isGuest) {
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Surface(
+                                shape = RoundedCornerShape(6.dp),
+                                color = WarmAmberLight,
+                                contentColor = WarmAmber
+                            ) {
+                                Text(
+                                    text = "ضيف",
+                                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                )
+                            }
+                        }
+                    }
 
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         if (student.studentCode.isNotBlank()) {
@@ -961,4 +1020,85 @@ private fun FastAttendanceStudentRow(
             }
         }
     }
+}
+
+@Composable
+private fun AddStudentToSessionDialog(
+    availableStudents: List<Student>,
+    gradeMap: Map<String, String>,
+    onDismiss: () -> Unit,
+    onStudentSelected: (String) -> Unit
+) {
+    var searchQuery by remember { mutableStateOf("") }
+    val filtered = remember(searchQuery, availableStudents) {
+        val q = searchQuery.trim().lowercase()
+        if (q.isBlank()) availableStudents else {
+            availableStudents.filter {
+                it.fullName.lowercase().contains(q) || it.studentCode.lowercase().contains(q)
+            }
+        }
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text("إضافة طالب إلى الجلسة الحالية", fontWeight = FontWeight.Bold)
+        },
+        text = {
+            Column(modifier = Modifier.fillMaxWidth().heightIn(max = 400.dp)) {
+                OutlinedTextField(
+                    value = searchQuery,
+                    onValueChange = { searchQuery = it },
+                    placeholder = { Text("ابحث بالاسم أو الكود...") },
+                    leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+                    singleLine = true,
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+                if (filtered.isEmpty()) {
+                    Box(modifier = Modifier.fillMaxWidth().padding(vertical = 24.dp), contentAlignment = Alignment.Center) {
+                        Text("لا يوجد طلاب متاحين للإضافة", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                } else {
+                    LazyColumn(
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        items(filtered, key = { it.studentId }) { student ->
+                            Card(
+                                shape = RoundedCornerShape(10.dp),
+                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { onStudentSelected(student.studentId) }
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(12.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(student.fullName, fontWeight = FontWeight.Bold, maxLines = 1)
+                                        Text(
+                                            "${gradeMap[student.gradeId] ?: ""} • كود: ${student.studentCode}",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                    Icon(Icons.Default.Add, contentDescription = "إضافة", tint = PrimaryIndigo)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {},
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("إغلاق")
+            }
+        }
+    )
 }

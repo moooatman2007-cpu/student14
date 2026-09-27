@@ -493,4 +493,40 @@ class AddEditStudentGroupSelectionTest {
             DatabaseProvider.resetForTesting()
         }
     }
+
+    @Test
+    fun `13 editing existing student via initialize preserves student ID and executes update instead of insert`() = runTest {
+        val existing = studentRepository.getStudentById("s_01")
+        assertNotNull(existing)
+
+        val viewModel = AddEditStudentViewModel(
+            savedStateHandle = null, // Simulating runtime navigation where SavedStateHandle is not passed to constructor
+            studentRepository = studentRepository,
+            gradeRepository = gradeRepository,
+            teacherRepository = teacherRepository,
+            groupRepository = groupRepository
+        )
+
+        // Screen calls initialize
+        viewModel.initialize("s_01", null)
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        val stateBeforeSave = viewModel.uiState.value
+        assertTrue("Must be in edit mode", stateBeforeSave.isEditMode)
+        assertEquals("s_01", stateBeforeSave.studentId)
+        assertEquals(existing!!.fullName, stateBeforeSave.fullName)
+        assertEquals(existing.studentCode, stateBeforeSave.existingStudentCode)
+
+        // Modify name and save
+        viewModel.onFullNameChange("طالب بعد التعديل")
+        viewModel.saveStudent()
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        // Verify that student in repository was updated in-place without creating a new student
+        val updated = studentRepository.getStudentById("s_01")
+        assertNotNull(updated)
+        assertEquals("s_01", updated!!.studentId)
+        assertEquals("طالب بعد التعديل", updated.fullName)
+        assertEquals(existing.studentCode, updated.studentCode)
+    }
 }

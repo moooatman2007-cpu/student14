@@ -11,6 +11,8 @@ import com.example.core.model.Student
 import com.example.core.model.SupabaseGroupDayDto
 import com.example.core.model.SupabaseGroupDto
 import com.example.core.model.SupabaseRecitationDto
+import com.example.core.model.SupabaseAttendanceDto
+import com.example.core.model.SupabaseStudentInsertDto
 import com.example.core.model.UpdateStudentRequest
 import com.example.core.model.UpsertAttendanceRequest
 import com.example.data.SupabaseClientProvider
@@ -31,6 +33,7 @@ class OutboxSyncWorker(
     private val outboxDao = db?.outboxDao()
     private val studentDao = db?.studentDao()
     private val client = SupabaseClientProvider.client
+    private val json = Json { ignoreUnknownKeys = true; isLenient = true; coerceInputValues = true }
 
     companion object {
         internal var operationProcessor: (suspend (OutboxEntity) -> Unit)? = null
@@ -150,23 +153,23 @@ class OutboxSyncWorker(
                 when (opType) {
                     "INSERT" -> {
                         Log.d("SyncDiag", "WORKER INSERT START: entityId=$entityId, opId=${op.id}")
-                        val req = Json.decodeFromString<InsertStudentRequest>(op.payload)
+                        val req = json.decodeFromString<InsertStudentRequest>(op.payload)
                         val targetTeacherId = op.teacherId ?: req.teacherId
-                        val dataMap = mapOf(
-                            "id" to entityId,
-                            "teacher_id" to targetTeacherId,
-                            "grade_id" to req.gradeId,
-                            "full_name" to req.fullName,
-                            "parent_phone" to req.parentPhone,
-                            "has_whatsapp" to req.hasWhatsApp,
-                            "alternative_phone" to req.alternativePhone
+                        val dto = SupabaseStudentInsertDto(
+                            id = if (req.id.isNotBlank()) req.id else entityId,
+                            teacherId = targetTeacherId,
+                            gradeId = req.gradeId,
+                            fullName = req.fullName,
+                            parentPhone = req.parentPhone,
+                            hasWhatsApp = req.hasWhatsApp,
+                            alternativePhone = req.alternativePhone
                         )
 
                         // Idempotent upsert on Supabase:
                         // On first insert, server trigger generates official ST-XXXXX student_code.
                         // On replay / retry, existing student row is updated without creating duplicates,
                         // and trigger preserves original student_code.
-                        val response = client.postgrest["students"].upsert(dataMap) {
+                        val response = client.postgrest["students"].upsert(dto) {
                             select()
                         }.decodeSingleOrNull<Student>()
 
@@ -184,7 +187,7 @@ class OutboxSyncWorker(
                         }
                     }
                     "UPDATE" -> {
-                        val req = Json.decodeFromString<UpdateStudentRequest>(op.payload)
+                        val req = json.decodeFromString<UpdateStudentRequest>(op.payload)
                         val targetTeacherId = op.teacherId ?: ""
                         val response = client.postgrest["students"].update(req) {
                             filter {
@@ -199,7 +202,7 @@ class OutboxSyncWorker(
                         }
                     }
                     "DELETE" -> {
-                        val req = Json.decodeFromString<SoftDeleteStudentRequest>(op.payload)
+                        val req = json.decodeFromString<SoftDeleteStudentRequest>(op.payload)
                         client.postgrest["students"].update(req) {
                             filter {
                                 eq("id", entityId)
@@ -213,8 +216,53 @@ class OutboxSyncWorker(
                 when (opType) {
                     "UPSERT" -> {
                         val req = Json.decodeFromString<UpsertAttendanceRequest>(op.payload)
-                        client.postgrest["attendance"].upsert(req) {
-                            onConflict = "student_id,date"
+                        if (req.groupId != null) {
+                            val conflictColumns = "student_id,date,group_id"
+                            client.postgrest["attendance"].upsert(req) {
+                                onConflict = conflictColumns
+                            }
+                        } else {
+                            val teacherId = op.teacherId ?: client.auth.currentUserOrNull()?.id ?: ""
+                            val existingList = client.postgrest["attendance"].select {
+                                filter {
+                                    eq("student_id", req.studentId)
+                                    eq("date", req.date)
+                                    eq("teacher_id", teacherId)
+                                }
+                            }.decodeList<SupabaseAttendanceDto>()
+
+                            val existing = existingList.find { it.groupId == null }
+                            if (existing != null) {
+                                client.postgrest["attendance"].update(req) {
+                                    filter {
+                                        eq("id", existing.id ?: "")
+                                        eq("teacher_id", teacherId)
+                                    }
+                                }
+                            } else {
+                                try {
+                                    client.postgrest["attendance"].insert(req)
+                                } catch (insEx: Exception) {
+                                    val recheckList = client.postgrest["attendance"].select {
+                                        filter {
+                                            eq("student_id", req.studentId)
+                                            eq("date", req.date)
+                                            eq("teacher_id", teacherId)
+                                        }
+                                    }.decodeList<SupabaseAttendanceDto>()
+                                    val recheck = recheckList.find { it.groupId == null }
+                                    if (recheck != null) {
+                                        client.postgrest["attendance"].update(req) {
+                                            filter {
+                                                eq("id", recheck.id ?: "")
+                                                eq("teacher_id", teacherId)
+                                            }
+                                        }
+                                    } else {
+                                        throw insEx
+                                    }
+                                }
+                            }
                         }
                     }
                     "DELETE" -> {

@@ -5,6 +5,7 @@ import android.util.Log
 import com.example.core.model.InsertStudentRequest
 import com.example.core.model.SoftDeleteStudentRequest
 import com.example.core.model.Student
+import com.example.core.model.SupabaseStudentInsertDto
 import com.example.core.model.TeacherStats
 import com.example.core.model.UpdateStudentRequest
 import com.example.data.SupabaseClientProvider
@@ -241,18 +242,18 @@ class SupabaseStudentRepository(
         )
 
         try {
-            val dataMap = mapOf(
-                "id" to generatedId,
-                "teacher_id" to teacherId,
-                "grade_id" to gradeId,
-                "full_name" to fullName.trim(),
-                "parent_phone" to parentPhone.trim(),
-                "has_whatsapp" to hasWhatsApp,
-                "alternative_phone" to alternativePhone?.trim()?.ifBlank { null }
+            val dto = SupabaseStudentInsertDto(
+                id = generatedId,
+                teacherId = teacherId,
+                gradeId = gradeId,
+                fullName = fullName.trim(),
+                parentPhone = parentPhone.trim(),
+                hasWhatsApp = hasWhatsApp,
+                alternativePhone = alternativePhone?.trim()?.ifBlank { null }
             )
 
             val insertedStudent = client.postgrest["students"]
-                .insert(dataMap) {
+                .insert(dto) {
                     select()
                 }
                 .decodeSingle<Student>()
@@ -278,6 +279,7 @@ class SupabaseStudentRepository(
                 studentDao?.upsertStudent(student.toEntity())
 
                 val request = InsertStudentRequest(
+                    id = generatedId,
                     teacherId = teacherId,
                     gradeId = gradeId,
                     fullName = fullName.trim(),

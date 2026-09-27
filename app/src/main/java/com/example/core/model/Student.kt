@@ -39,7 +39,19 @@ private fun parseIsoToMillis(isoString: String?): Long {
 }
 
 @Serializable
+data class SupabaseStudentInsertDto(
+    @SerialName("id") val id: String,
+    @SerialName("teacher_id") val teacherId: String,
+    @SerialName("grade_id") val gradeId: String,
+    @SerialName("full_name") val fullName: String,
+    @SerialName("parent_phone") val parentPhone: String,
+    @SerialName("has_whatsapp") val hasWhatsApp: Boolean = true,
+    @SerialName("alternative_phone") val alternativePhone: String? = null
+)
+
+@Serializable
 data class InsertStudentRequest(
+    @SerialName("id") val id: String = "",
     @SerialName("teacher_id") val teacherId: String,
     @SerialName("grade_id") val gradeId: String,
     @SerialName("full_name") val fullName: String,

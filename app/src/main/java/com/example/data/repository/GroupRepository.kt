@@ -11,7 +11,9 @@ interface GroupRepository {
     suspend fun getGroupById(teacherId: String, groupId: String): Group?
     suspend fun createGroup(group: Group): Result<Group>
     suspend fun updateGroup(group: Group): Result<Group>
+    suspend fun deleteGroup(teacherId: String, groupId: String): Result<Unit>
     suspend fun deactivateGroup(teacherId: String, groupId: String): Result<Unit>
+    suspend fun refreshGroups(teacherId: String): Result<Unit>
     suspend fun assignStudentToGroup(teacherId: String, studentId: String, groupId: String?): Result<Unit>
     
     // Group Days

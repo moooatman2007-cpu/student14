@@ -15,12 +15,15 @@ interface AttendanceRepository {
         studentId: String,
         date: String, // "YYYY-MM-DD"
         status: AttendanceStatus,
-        note: String? = null
+        note: String? = null,
+        groupId: String? = null
     ): Result<Attendance>
     suspend fun recordBatchAttendance(
         date: String,
-        records: List<com.example.core.model.BatchAttendanceItemDto>
+        records: List<com.example.core.model.BatchAttendanceItemDto>,
+        groupId: String? = null
     ): Result<com.example.core.model.BatchAttendanceResult>
     suspend fun deleteAttendance(attendanceId: String): Result<Unit>
     suspend fun getAttendanceByDate(studentId: String, date: String): Attendance?
+    suspend fun getAttendanceForDateAndGroup(date: String, groupId: String?): List<Attendance>
 }

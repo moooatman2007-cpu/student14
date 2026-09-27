@@ -104,6 +104,10 @@ fun AddEditStudentScreen(
         uiState.grades.find { it.id == uiState.selectedGradeId }?.name ?: "اختر الصف الدراسي"
     }
 
+    LaunchedEffect(studentIdArg, gradeIdArg) {
+        viewModel.initialize(studentIdArg, gradeIdArg)
+    }
+
     LaunchedEffect(Unit) {
         viewModel.events.collectLatest { event ->
             when (event) {

@@ -197,6 +197,9 @@ fun MainAppNavigation(
                     },
                     onNavigateToStudentDetail = { studentId ->
                         navController.navigate(Screen.StudentDetail.createRoute(studentId))
+                    },
+                    onNavigateToGroups = {
+                        navController.navigate(Screen.Groups.route)
                     }
                 )
             }

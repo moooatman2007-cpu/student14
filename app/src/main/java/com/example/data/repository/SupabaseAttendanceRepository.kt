@@ -353,28 +353,78 @@ class SupabaseAttendanceRepository(
         studentId: String,
         date: String,
         status: AttendanceStatus,
-        note: String?
+        note: String?,
+        groupId: String?
     ): Result<Attendance> = withContext(Dispatchers.IO) {
         val user = client.auth.currentUserOrNull()
         val teacherId = SupabaseClientProvider.mockTeacherId ?: user?.id
             ?: return@withContext Result.failure(IllegalStateException("انتهت الجلسة، يرجى تسجيل الدخول أولاً."))
 
-        val studentGroupId = studentDao?.getStudentByIdSync(teacherId, studentId)?.groupId
+        val effectiveGroupId = groupId ?: studentDao?.getStudentByIdSync(teacherId, studentId)?.groupId
+        val attendanceId = if (effectiveGroupId != null) "${studentId}_${date}_${effectiveGroupId}" else "${studentId}_${date}"
 
         try {
             val upsertDto = UpsertAttendanceRequest(
                 teacherId = teacherId,
                 studentId = studentId,
-                groupId = studentGroupId,
+                groupId = effectiveGroupId,
                 date = date,
                 status = status.name,
                 note = note?.ifBlank { null }
             )
 
-            val dto = client.postgrest["attendance"].upsert(upsertDto) {
-                onConflict = "student_id,date"
-                select()
-            }.decodeSingle<SupabaseAttendanceDto>()
+            val dto = if (effectiveGroupId == null) {
+                val existingList = client.postgrest["attendance"].select {
+                    filter {
+                        eq("student_id", studentId)
+                        eq("date", date)
+                        eq("teacher_id", teacherId)
+                    }
+                }.decodeList<SupabaseAttendanceDto>()
+
+                val existing = existingList.find { it.groupId == null }
+                if (existing != null) {
+                    client.postgrest["attendance"].update(upsertDto) {
+                        filter {
+                            eq("id", existing.id ?: "")
+                            eq("teacher_id", teacherId)
+                        }
+                        select()
+                    }.decodeSingle<SupabaseAttendanceDto>()
+                } else {
+                    try {
+                        client.postgrest["attendance"].insert(upsertDto) {
+                            select()
+                        }.decodeSingle<SupabaseAttendanceDto>()
+                    } catch (insEx: Exception) {
+                        val recheckList = client.postgrest["attendance"].select {
+                            filter {
+                                eq("student_id", studentId)
+                                eq("date", date)
+                                eq("teacher_id", teacherId)
+                            }
+                        }.decodeList<SupabaseAttendanceDto>()
+                        val recheck = recheckList.find { it.groupId == null }
+                        if (recheck != null) {
+                            client.postgrest["attendance"].update(upsertDto) {
+                                filter {
+                                    eq("id", recheck.id ?: "")
+                                    eq("teacher_id", teacherId)
+                                }
+                                select()
+                            }.decodeSingle<SupabaseAttendanceDto>()
+                        } else {
+                            throw insEx
+                        }
+                    }
+                }
+            } else {
+                val conflictColumns = "student_id,date,group_id"
+                client.postgrest["attendance"].upsert(upsertDto) {
+                    onConflict = conflictColumns
+                    select()
+                }.decodeSingle<SupabaseAttendanceDto>()
+            }
 
             val attendance = dto.toAttendance(teacherId = teacherId)
             if (com.example.data.auth.AccountSessionManager.isSessionActive(teacherId)) {
@@ -388,10 +438,10 @@ class SupabaseAttendanceRepository(
             try {
                 kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
                     val attendance = Attendance(
-                        attendanceId = "${studentId}_${date}",
+                        attendanceId = attendanceId,
                         studentId = studentId,
                         teacherId = teacherId,
-                        groupId = studentGroupId,
+                        groupId = effectiveGroupId,
                         date = date,
                         status = status,
                         note = note
@@ -401,7 +451,7 @@ class SupabaseAttendanceRepository(
                     val upsertDto = UpsertAttendanceRequest(
                         teacherId = teacherId,
                         studentId = studentId,
-                        groupId = studentGroupId,
+                        groupId = effectiveGroupId,
                         date = date,
                         status = status.name,
                         note = note?.ifBlank { null }
@@ -412,7 +462,7 @@ class SupabaseAttendanceRepository(
                             id = UUID.randomUUID().toString(),
                             operationType = "UPSERT",
                             entityType = "ATTENDANCE",
-                            entityId = "${studentId}_${date}",
+                            entityId = attendanceId,
                             payload = payload,
                             createdAt = System.currentTimeMillis(),
                             status = "PENDING",
@@ -432,7 +482,8 @@ class SupabaseAttendanceRepository(
 
     override suspend fun recordBatchAttendance(
         date: String,
-        records: List<BatchAttendanceItemDto>
+        records: List<BatchAttendanceItemDto>,
+        groupId: String?
     ): Result<BatchAttendanceResult> = withContext(Dispatchers.IO) {
         val user = client.auth.currentUserOrNull()
         val teacherId = SupabaseClientProvider.mockTeacherId ?: user?.id
@@ -447,96 +498,118 @@ class SupabaseAttendanceRepository(
         var cloudSaved = false
         var lastCloudError: Exception? = null
 
-        // 1. Primary Strategy: Try RPC record_batch_attendance
+        // Direct Postgrest Bulk Upsert on 'attendance' table with Typed DTOs
         try {
-            val recordsArray = buildJsonArray {
-                for (item in records) {
-                    add(buildJsonObject {
-                        put("student_id", item.studentId)
-                        put("status", item.status)
-                        if (item.note != null) {
-                            put("note", item.note)
-                        } else {
-                            put("note", null as String?)
-                        }
-                    })
-                }
-            }
-
-            val params = buildJsonObject {
-                put("p_date", date)
-                put("p_records", recordsArray)
-            }
-
-            val resultDto = client.postgrest.rpc(
-                function = "record_batch_attendance",
-                parameters = params
-            ).decodeSingle<BatchAttendanceResultDto>()
-
-            batchResult = resultDto.toBatchAttendanceResult().copy(syncStatus = BatchSyncStatus.SAVED_TO_CLOUD)
-            cloudSaved = true
-        } catch (rpcEx: Exception) {
-            lastCloudError = rpcEx
-            android.util.Log.w("SupabaseAttendanceRepo", "record_batch_attendance RPC call failed (${rpcEx.javaClass.simpleName}: ${rpcEx.message}). Falling back to direct Postgrest bulk upsert...")
-
-            // 2. Secondary Strategy: Direct Postgrest Bulk Upsert on 'attendance' table
-            try {
-                val upsertRequests = records.map { item ->
-                    val studentGroupId = studentEntitiesMap[item.studentId]?.groupId
-                    UpsertAttendanceRequest(
-                        teacherId = teacherId,
-                        studentId = item.studentId,
-                        groupId = studentGroupId,
-                        date = date,
-                        status = item.status,
-                        note = item.note?.ifBlank { null }
-                    )
-                }
-
-                client.postgrest["attendance"].upsert(upsertRequests) {
-                    onConflict = "student_id,date"
-                }
-
-                var presentCount = 0
-                var absentCount = 0
-                var lateCount = 0
-                var excusedCount = 0
-                for (record in records) {
-                    val statusEnum = try { AttendanceStatus.valueOf(record.status) } catch(_: Exception) { AttendanceStatus.PRESENT }
-                    when (statusEnum) {
-                        AttendanceStatus.PRESENT -> presentCount++
-                        AttendanceStatus.ABSENT -> absentCount++
-                        AttendanceStatus.LATE -> lateCount++
-                        AttendanceStatus.EXCUSED -> excusedCount++
-                    }
-                }
-
-                batchResult = BatchAttendanceResult(
-                    total = records.size,
-                    presentCount = presentCount,
-                    absentCount = absentCount,
-                    lateCount = lateCount,
-                    excusedCount = excusedCount,
+            val upsertRequests = records.map { item ->
+                val effectiveGroupId = groupId ?: studentEntitiesMap[item.studentId]?.groupId
+                UpsertAttendanceRequest(
+                    teacherId = teacherId,
+                    studentId = item.studentId,
+                    groupId = effectiveGroupId,
                     date = date,
-                    syncStatus = BatchSyncStatus.SAVED_TO_CLOUD
+                    status = item.status,
+                    note = item.note?.ifBlank { null }
                 )
-                cloudSaved = true
-            } catch (bulkEx: Exception) {
-                lastCloudError = bulkEx
-                android.util.Log.e("SupabaseAttendanceRepo", "Direct Postgrest bulk upsert failed (${bulkEx.javaClass.simpleName}: ${bulkEx.message})")
             }
+
+            val grouped = upsertRequests.groupBy { it.groupId != null }
+            val withGroup = grouped[true] ?: emptyList()
+            val withoutGroup = grouped[false] ?: emptyList()
+
+            if (withGroup.isNotEmpty()) {
+                val conflictColumns = "student_id,date,group_id"
+                client.postgrest["attendance"].upsert(withGroup) {
+                    onConflict = conflictColumns
+                }
+            }
+
+            for (req in withoutGroup) {
+                try {
+                    val existingList = client.postgrest["attendance"].select {
+                        filter {
+                            eq("student_id", req.studentId)
+                            eq("date", date)
+                            eq("teacher_id", teacherId)
+                        }
+                    }.decodeList<SupabaseAttendanceDto>()
+
+                    val existing = existingList.find { it.groupId == null }
+                    if (existing != null) {
+                        client.postgrest["attendance"].update(req) {
+                            filter {
+                                eq("id", existing.id ?: "")
+                                eq("teacher_id", teacherId)
+                            }
+                        }
+                    } else {
+                        try {
+                            client.postgrest["attendance"].insert(req)
+                        } catch (insEx: Exception) {
+                            val recheckList = client.postgrest["attendance"].select {
+                                filter {
+                                    eq("student_id", req.studentId)
+                                    eq("date", date)
+                                    eq("teacher_id", teacherId)
+                                }
+                            }.decodeList<SupabaseAttendanceDto>()
+                            val recheck = recheckList.find { it.groupId == null }
+                            if (recheck != null) {
+                                client.postgrest["attendance"].update(req) {
+                                    filter {
+                                        eq("id", recheck.id ?: "")
+                                        eq("teacher_id", teacherId)
+                                    }
+                                }
+                            } else {
+                                throw insEx
+                            }
+                        }
+                    }
+                } catch (itemEx: Exception) {
+                    android.util.Log.e("SupabaseAttendanceRepo", "Failed batch item for student ${req.studentId}: ${itemEx.message}")
+                }
+            }
+
+            var presentCount = 0
+            var absentCount = 0
+            var lateCount = 0
+            var excusedCount = 0
+            for (record in records) {
+                val statusEnum = try { AttendanceStatus.valueOf(record.status) } catch(_: Exception) { AttendanceStatus.PRESENT }
+                when (statusEnum) {
+                    AttendanceStatus.PRESENT -> presentCount++
+                    AttendanceStatus.ABSENT -> absentCount++
+                    AttendanceStatus.LATE -> lateCount++
+                    AttendanceStatus.EXCUSED -> excusedCount++
+                }
+            }
+
+            batchResult = BatchAttendanceResult(
+                total = records.size,
+                presentCount = presentCount,
+                absentCount = absentCount,
+                lateCount = lateCount,
+                excusedCount = excusedCount,
+                date = date,
+                syncStatus = BatchSyncStatus.SAVED_TO_CLOUD
+            )
+            cloudSaved = true
+        } catch (bulkEx: Exception) {
+            lastCloudError = bulkEx
+            android.util.Log.e("SupabaseAttendanceRepo", "Direct Postgrest bulk upsert failed (${bulkEx.javaClass.simpleName}: ${bulkEx.message})")
         }
 
         if (cloudSaved && batchResult != null) {
             try {
                 val entities = records.map { item ->
                     val statusEnum = try { AttendanceStatus.valueOf(item.status) } catch(_: Exception) { AttendanceStatus.PRESENT }
-                    val studentGroupId = studentEntitiesMap[item.studentId]?.groupId
+                    val effectiveGroupId = groupId ?: studentEntitiesMap[item.studentId]?.groupId
+                    val attendanceId = if (effectiveGroupId != null) "${item.studentId}_${date}_${effectiveGroupId}" else "${item.studentId}_${date}"
                     Attendance(
-                        attendanceId = "${item.studentId}_${date}",
+                        attendanceId = attendanceId,
                         studentId = item.studentId,
                         teacherId = teacherId,
-                        groupId = studentGroupId,
+                        groupId = effectiveGroupId,
                         date = date,
                         status = statusEnum,
                         note = item.note
@@ -571,13 +644,13 @@ class SupabaseAttendanceRepository(
                         AttendanceStatus.EXCUSED -> excusedCount++
                     }
 
-                    val studentGroupId = studentEntitiesMap[record.studentId]?.groupId
-                    val attendanceId = "${record.studentId}_${date}"
+                    val effectiveGroupId = groupId ?: studentEntitiesMap[record.studentId]?.groupId
+                    val attendanceId = if (effectiveGroupId != null) "${record.studentId}_${date}_${effectiveGroupId}" else "${record.studentId}_${date}"
                     val attendance = Attendance(
                         attendanceId = attendanceId,
                         studentId = record.studentId,
                         teacherId = teacherId,
-                        groupId = studentGroupId,
+                        groupId = effectiveGroupId,
                         date = date,
                         status = statusEnum,
                         note = record.note
@@ -587,7 +660,7 @@ class SupabaseAttendanceRepository(
                     val upsertDto = UpsertAttendanceRequest(
                         teacherId = teacherId,
                         studentId = record.studentId,
-                        groupId = studentGroupId,
+                        groupId = effectiveGroupId,
                         date = date,
                         status = statusEnum.name,
                         note = record.note?.ifBlank { null }
@@ -706,6 +779,36 @@ class SupabaseAttendanceRepository(
         } catch (e: Exception) {
             e.printStackTrace()
             null
+        }
+    }
+
+    override suspend fun getAttendanceForDateAndGroup(
+        date: String,
+        groupId: String?
+    ): List<Attendance> = withContext(Dispatchers.IO) {
+        val user = client.auth.currentUserOrNull()
+        val teacherId = SupabaseClientProvider.mockTeacherId ?: user?.id ?: return@withContext emptyList()
+
+        try {
+            val list = client.postgrest["attendance"]
+                .select {
+                    filter {
+                        eq("teacher_id", teacherId)
+                        eq("date", date)
+                    }
+                }
+                .decodeList<SupabaseAttendanceDto>()
+                .map { it.toAttendance(teacherId = teacherId) }
+                .filter { it.groupId == groupId }
+
+            if (com.example.data.auth.AccountSessionManager.isSessionActive(teacherId) && attendanceDao != null) {
+                attendanceDao.upsertAttendance(list.map { it.toEntity() })
+            }
+            list
+        } catch (e: Exception) {
+            e.printStackTrace()
+            val cached = attendanceDao?.getAttendanceByDateAndGroupSync(teacherId, date, groupId)
+            cached?.map { it.toDomain() } ?: emptyList()
         }
     }
 }

@@ -108,14 +108,16 @@ class MockAttendanceRepository : AttendanceRepository {
         studentId: String,
         date: String,
         status: AttendanceStatus,
-        note: String?
+        note: String?,
+        groupId: String?
     ): Result<Attendance> {
         var updatedAttendance: Attendance? = null
         _attendances.update { list ->
-            val existingIndex = list.indexOfFirst { it.studentId == studentId && it.date == date }
+            val existingIndex = list.indexOfFirst { it.studentId == studentId && it.date == date && (groupId == null || it.groupId == groupId) }
             if (existingIndex >= 0) {
                 val existing = list[existingIndex]
                 val modified = existing.copy(
+                    groupId = groupId ?: existing.groupId,
                     status = status,
                     note = note,
                     updatedAt = System.currentTimeMillis()
@@ -126,6 +128,7 @@ class MockAttendanceRepository : AttendanceRepository {
                 val newRecord = Attendance(
                     attendanceId = "att_" + UUID.randomUUID().toString().take(8),
                     studentId = studentId,
+                    groupId = groupId,
                     date = date,
                     status = status,
                     note = note,
@@ -141,7 +144,8 @@ class MockAttendanceRepository : AttendanceRepository {
 
     override suspend fun recordBatchAttendance(
         date: String,
-        records: List<com.example.core.model.BatchAttendanceItemDto>
+        records: List<com.example.core.model.BatchAttendanceItemDto>,
+        groupId: String?
     ): Result<com.example.core.model.BatchAttendanceResult> {
         var presentCount = 0
         var absentCount = 0
@@ -158,12 +162,12 @@ class MockAttendanceRepository : AttendanceRepository {
                     AttendanceStatus.LATE -> lateCount++
                     AttendanceStatus.EXCUSED -> excusedCount++
                 }
-                val existingIndex = updated.indexOfFirst { it.studentId == rec.studentId && it.date == date }
+                val existingIndex = updated.indexOfFirst { it.studentId == rec.studentId && it.date == date && (groupId == null || it.groupId == groupId) }
                 val existing = if (existingIndex >= 0) updated[existingIndex] else null
                 val item = Attendance(
-                    attendanceId = existing?.attendanceId ?: "att_${rec.studentId}_$date",
+                    attendanceId = existing?.attendanceId ?: "att_${rec.studentId}_$date${if (groupId != null) "_$groupId" else ""}",
                     studentId = rec.studentId,
-                    groupId = existing?.groupId,
+                    groupId = groupId ?: existing?.groupId,
                     date = date,
                     status = status,
                     note = rec.note,
@@ -200,6 +204,10 @@ class MockAttendanceRepository : AttendanceRepository {
 
     override suspend fun getAttendanceByDate(studentId: String, date: String): Attendance? {
         return _attendances.value.find { it.studentId == studentId && it.date == date }
+    }
+
+    override suspend fun getAttendanceForDateAndGroup(date: String, groupId: String?): List<Attendance> {
+        return _attendances.value.filter { it.date == date && (groupId == null || it.groupId == groupId) }
     }
 
     override fun getAllAttendanceForTeacher(): Flow<List<Attendance>> {

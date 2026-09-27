@@ -31,6 +31,34 @@ data class StudentDailyAttendance(
     val note: String? = null
 )
 
+enum class GroupReportMode(val labelAr: String) {
+    PERIOD("فترة زمنية"),
+    DAILY("تقرير يومي")
+}
+
+data class StudentGroupPeriodAttendance(
+    val student: Student,
+    val primaryGroupName: String,
+    val presentCount: Int,
+    val absentCount: Int,
+    val lateCount: Int,
+    val excusedCount: Int,
+    val totalRecordedSessions: Int,
+    val attendanceRate: Float,
+    val isGuest: Boolean
+)
+
+data class GroupPeriodReportData(
+    val group: Group,
+    val gradeName: String,
+    val startDate: LocalDate,
+    val endDate: LocalDate,
+    val totalSessionsHeld: Int,
+    val totalStudents: Int,
+    val avgAttendanceRate: Float,
+    val studentList: List<StudentGroupPeriodAttendance>
+)
+
 data class GroupDailyReportData(
     val group: Group,
     val gradeName: String,
@@ -131,6 +159,8 @@ data class ReportsUiState(
     val selectedStudentId: String? = null,
     val selectedGradeId: String? = null,
     val selectedGroupId: String? = null,
+    val groupReportMode: GroupReportMode = GroupReportMode.PERIOD,
+    val groupPeriodReport: GroupPeriodReportData? = null,
     val groupDailyReport: GroupDailyReportData? = null,
     val gradeDailyReport: GradeDailyReportData? = null,
     val teacherDailyReport: TeacherDailyReportData? = null,
@@ -145,7 +175,8 @@ private data class FilterParams(
     val end: LocalDate,
     val studentId: String?,
     val gradeId: String?,
-    val groupId: String?
+    val groupId: String?,
+    val groupReportMode: GroupReportMode
 )
 
 private data class RepoData(
@@ -176,6 +207,7 @@ class ReportsViewModel(
     private val _selectedStudentId = MutableStateFlow<String?>(null)
     private val _selectedGradeId = MutableStateFlow<String?>(null)
     private val _selectedGroupId = MutableStateFlow<String?>(null)
+    private val _groupReportMode = MutableStateFlow(GroupReportMode.PERIOD)
 
     private val _uiState = MutableStateFlow(ReportsUiState())
     val uiState: StateFlow<ReportsUiState> = _uiState.asStateFlow()
@@ -190,8 +222,8 @@ class ReportsViewModel(
             val teacherId = teacher?.id ?: ""
 
             val paramsFlow = combine(
-                combine(_selectedTab, _selectedDate, _startDate, _endDate) { tab, date, start, end ->
-                    listOf<Any?>(tab, date, start, end)
+                combine(_selectedTab, _selectedDate, _startDate, _endDate, _groupReportMode) { tab, date, start, end, mode ->
+                    listOf<Any?>(tab, date, start, end, mode)
                 },
                 combine(_selectedStudentId, _selectedGradeId, _selectedGroupId) { studentId, gradeId, groupId ->
                     listOf<Any?>(studentId, gradeId, groupId)
@@ -202,6 +234,7 @@ class ReportsViewModel(
                     date = list1[1] as LocalDate,
                     start = list1[2] as LocalDate,
                     end = list1[3] as LocalDate,
+                    groupReportMode = list1[4] as GroupReportMode,
                     studentId = list2[0] as String?,
                     gradeId = list2[1] as String?,
                     groupId = list2[2] as String?
@@ -293,32 +326,91 @@ class ReportsViewModel(
                     Triple(effectiveGroupId, status, att?.note)
                 }
 
-                // 1. Group Daily Report
-                val groupDailyReport = if (groupId != null) {
-                    val group = filteredGroups.find { it.id == groupId }
-                    if (group != null) {
-                        val gradeName = filteredGrades.find { it.id == group.gradeId }?.name ?: ""
-                        val groupStudentsWithStatus = studentDailyMap.filter { (s, triple) ->
-                            triple.first == group.id
-                        }.map { (s, triple) ->
-                            StudentDailyAttendance(
-                                student = s,
-                                status = triple.second,
-                                note = triple.third
-                            )
-                        }.sortedBy { it.student.fullName }
-
-                        GroupDailyReportData(
-                            group = group,
-                            gradeName = gradeName,
-                            date = selectedDate,
-                            totalStudents = groupStudentsWithStatus.size,
-                            presentCount = groupStudentsWithStatus.count { it.status == DailyAttendanceStatus.PRESENT },
-                            absentCount = groupStudentsWithStatus.count { it.status == DailyAttendanceStatus.ABSENT },
-                            noRecordCount = groupStudentsWithStatus.count { it.status == DailyAttendanceStatus.NO_RECORD },
-                            studentList = groupStudentsWithStatus
+                // 1. Group Daily & Period Report
+                val group = if (groupId != null) filteredGroups.find { it.id == groupId } else null
+                val groupDailyReport = if (group != null) {
+                    val gradeName = filteredGrades.find { it.id == group.gradeId }?.name ?: ""
+                    val groupStudentsWithStatus = studentDailyMap.filter { (s, triple) ->
+                        triple.first == group.id
+                    }.map { (s, triple) ->
+                        StudentDailyAttendance(
+                            student = s,
+                            status = triple.second,
+                            note = triple.third
                         )
-                    } else null
+                    }.sortedBy { it.student.fullName }
+
+                    GroupDailyReportData(
+                        group = group,
+                        gradeName = gradeName,
+                        date = selectedDate,
+                        totalStudents = groupStudentsWithStatus.size,
+                        presentCount = groupStudentsWithStatus.count { it.status == DailyAttendanceStatus.PRESENT },
+                        absentCount = groupStudentsWithStatus.count { it.status == DailyAttendanceStatus.ABSENT },
+                        noRecordCount = groupStudentsWithStatus.count { it.status == DailyAttendanceStatus.NO_RECORD },
+                        studentList = groupStudentsWithStatus
+                    )
+                } else null
+
+                val startStr = start.toString()
+                val endStr = end.toString()
+                val groupPeriodReport = if (group != null) {
+                    val gradeName = filteredGrades.find { it.id == group.gradeId }?.name ?: ""
+                    val groupAttendanceInRange = allAttendance.filter {
+                        it.groupId == group.id && it.date in startStr..endStr
+                    }
+                    val sessionDates = groupAttendanceInRange.map { it.date }.distinct()
+                    val totalSessionsHeld = sessionDates.size
+
+                    val baseStudents = filteredStudents.filter { it.groupId == group.id }
+                    val guestStudentIds = groupAttendanceInRange.map { it.studentId }.toSet() - baseStudents.map { it.studentId }.toSet()
+                    val guestStudents = filteredStudents.filter { guestStudentIds.contains(it.studentId) }
+                    val allGroupReportingStudents = (baseStudents + guestStudents).distinctBy { it.studentId }
+
+                    val studentStatsList = allGroupReportingStudents.map { student ->
+                        val studentRecords = groupAttendanceInRange.filter { it.studentId == student.studentId }
+                        val presentCount = studentRecords.count { it.status == AttendanceStatus.PRESENT }
+                        val absentCount = studentRecords.count { it.status == AttendanceStatus.ABSENT }
+                        val lateCount = studentRecords.count { it.status == AttendanceStatus.LATE }
+                        val excusedCount = studentRecords.count { it.status == AttendanceStatus.EXCUSED }
+                        val totalRecorded = studentRecords.size
+
+                        val attendedCount = presentCount + lateCount
+                        val rate = if (totalRecorded > 0) {
+                            (attendedCount.toFloat() / totalRecorded) * 100f
+                        } else 0f
+
+                        val primaryGroup = filteredGroups.find { it.id == student.groupId }
+                        val primaryGroupName = primaryGroup?.name ?: "بدون مجموعة"
+                        val isGuest = student.groupId != group.id
+
+                        StudentGroupPeriodAttendance(
+                            student = student,
+                            primaryGroupName = primaryGroupName,
+                            presentCount = presentCount,
+                            absentCount = absentCount,
+                            lateCount = lateCount,
+                            excusedCount = excusedCount,
+                            totalRecordedSessions = totalRecorded,
+                            attendanceRate = rate,
+                            isGuest = isGuest
+                        )
+                    }.sortedWith(compareBy({ it.isGuest }, { it.student.fullName }))
+
+                    val avgRate = if (studentStatsList.isNotEmpty()) {
+                        studentStatsList.map { it.attendanceRate }.average().toFloat()
+                    } else 0f
+
+                    GroupPeriodReportData(
+                        group = group,
+                        gradeName = gradeName,
+                        startDate = start,
+                        endDate = end,
+                        totalSessionsHeld = totalSessionsHeld,
+                        totalStudents = studentStatsList.size,
+                        avgAttendanceRate = avgRate,
+                        studentList = studentStatsList
+                    )
                 } else null
 
                 // 2. Grade Daily Report
@@ -432,8 +524,6 @@ class ReportsViewModel(
                 )
 
                 // 4. Student Report (Period based)
-                val startStr = start.toString()
-                val endStr = end.toString()
                 val studentReport = if (studentId != null) {
                     val student = filteredStudents.find { it.studentId == studentId }
                     if (student != null) {
@@ -529,6 +619,8 @@ class ReportsViewModel(
                     selectedStudentId = studentId,
                     selectedGradeId = gradeId,
                     selectedGroupId = groupId,
+                    groupReportMode = params.groupReportMode,
+                    groupPeriodReport = groupPeriodReport,
                     groupDailyReport = groupDailyReport,
                     gradeDailyReport = gradeDailyReport,
                     teacherDailyReport = teacherDailyReport,
@@ -543,6 +635,10 @@ class ReportsViewModel(
 
     fun selectTab(tab: ReportsTab) {
         _selectedTab.value = tab
+    }
+
+    fun setGroupReportMode(mode: GroupReportMode) {
+        _groupReportMode.value = mode
     }
 
     fun setSelectedDate(date: LocalDate) {

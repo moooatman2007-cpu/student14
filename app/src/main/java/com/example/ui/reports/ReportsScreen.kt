@@ -88,8 +88,89 @@ fun ReportsScreen(
                 }
             }
 
-            // Date Bar Navigation for Daily Reports
-            if (uiState.selectedTab != ReportsTab.STUDENT) {
+            // Date Bar Navigation / Period Navigation
+            if (uiState.selectedTab == ReportsTab.GROUP_DAILY) {
+                // Group Mode Selector (Period vs Daily)
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = Dimens.Spacing16, vertical = Dimens.Spacing4),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    FilterChip(
+                        selected = uiState.groupReportMode == GroupReportMode.PERIOD,
+                        onClick = { viewModel.setGroupReportMode(GroupReportMode.PERIOD) },
+                        label = { Text("📅 تقرير فترة زمنية") },
+                        colors = FilterChipDefaults.filterChipColors(
+                            selectedContainerColor = PrimaryIndigo,
+                            selectedLabelColor = Color.White
+                        ),
+                        modifier = Modifier.weight(1f)
+                    )
+                    FilterChip(
+                        selected = uiState.groupReportMode == GroupReportMode.DAILY,
+                        onClick = { viewModel.setGroupReportMode(GroupReportMode.DAILY) },
+                        label = { Text("🗓️ تقرير يومي") },
+                        colors = FilterChipDefaults.filterChipColors(
+                            selectedContainerColor = PrimaryIndigo,
+                            selectedLabelColor = Color.White
+                        ),
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+
+                if (uiState.groupReportMode == GroupReportMode.PERIOD) {
+                    // Quick period chips
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = Dimens.Spacing16, vertical = Dimens.Spacing4),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        FilterChip(
+                            selected = uiState.startDate == LocalDate.now().minusDays(30),
+                            onClick = { viewModel.setDateRange(LocalDate.now().minusDays(30), LocalDate.now()) },
+                            label = { Text("آخر 30 يوم", style = MaterialTheme.typography.labelSmall) }
+                        )
+                        FilterChip(
+                            selected = uiState.startDate == LocalDate.now().minusDays(7),
+                            onClick = { viewModel.setDateRange(LocalDate.now().minusDays(7), LocalDate.now()) },
+                            label = { Text("آخر 7 أيام", style = MaterialTheme.typography.labelSmall) }
+                        )
+                        FilterChip(
+                            selected = uiState.startDate == LocalDate.now().withDayOfMonth(1),
+                            onClick = { viewModel.setDateRange(LocalDate.now().withDayOfMonth(1), LocalDate.now()) },
+                            label = { Text("هذا الشهر", style = MaterialTheme.typography.labelSmall) }
+                        )
+                    }
+                    Surface(
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(Dimens.Spacing8),
+                            horizontalArrangement = Arrangement.Center,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(Icons.Default.DateRange, null, modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.primary)
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "الفترة: ${uiState.startDate} — ${uiState.endDate}",
+                                style = MaterialTheme.typography.labelMedium
+                            )
+                        }
+                    }
+                } else {
+                    DailyDateBar(
+                        selectedDate = uiState.selectedDate,
+                        onPrevious = { viewModel.previousDay() },
+                        onNext = { viewModel.nextDay() },
+                        onPickDate = { showDatePicker = true },
+                        onTodayClick = { viewModel.setSelectedDate(LocalDate.now()) }
+                    )
+                }
+            } else if (uiState.selectedTab != ReportsTab.STUDENT) {
                 DailyDateBar(
                     selectedDate = uiState.selectedDate,
                     onPrevious = { viewModel.previousDay() },
@@ -128,7 +209,13 @@ fun ReportsScreen(
                 verticalArrangement = Arrangement.spacedBy(Dimens.Spacing16)
             ) {
                 when (uiState.selectedTab) {
-                    ReportsTab.GROUP_DAILY -> groupDailyReportContent(uiState, onNavigateToStudentDetail)
+                    ReportsTab.GROUP_DAILY -> {
+                        if (uiState.groupReportMode == GroupReportMode.PERIOD) {
+                            groupPeriodReportContent(uiState, onNavigateToStudentDetail)
+                        } else {
+                            groupDailyReportContent(uiState, onNavigateToStudentDetail)
+                        }
+                    }
                     ReportsTab.GRADE_DAILY -> gradeDailyReportContent(uiState, viewModel)
                     ReportsTab.TEACHER_DAILY -> teacherDailyReportContent(uiState, viewModel)
                     ReportsTab.STUDENT -> studentReportContent(uiState, onNavigateToStudentDetail)
@@ -387,7 +474,254 @@ fun DailySelectionControls(uiState: ReportsUiState, viewModel: ReportsViewModel)
     }
 }
 
-// ---------------- 1. Group Daily Report Content ----------------
+// ---------------- 1. Group Period & Daily Report Content ----------------
+fun LazyListScope.groupPeriodReportContent(
+    uiState: ReportsUiState,
+    onNavigateToStudentDetail: (String) -> Unit
+) {
+    val report = uiState.groupPeriodReport
+
+    if (report == null) {
+        item {
+            EmptyState(
+                message = if (uiState.groups.isEmpty()) "لا توجد مجموعات معرفة للمدرس" else "الرجاء اختيار مجموعة لعرض تقرير الفترة",
+                icon = Icons.Default.Groups
+            )
+        }
+        return
+    }
+
+    // Header Card
+    item {
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(20.dp),
+            colors = CardDefaults.cardColors(containerColor = PrimaryIndigoLight)
+        ) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column {
+                        Text(
+                            text = report.group.name,
+                            style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Black),
+                            color = PrimaryIndigo
+                        )
+                        Text(
+                            text = "الصف: ${report.gradeName}",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            text = "الفترة: ${report.startDate} إلى ${report.endDate}",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Column(horizontalAlignment = Alignment.End) {
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = PrimaryIndigo
+                        ) {
+                            Text(
+                                text = "${report.totalStudents} طالب",
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                                style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                                color = Color.White
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "${report.totalSessionsHeld} جلسة مسجلة",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    // Average attendance rate metric
+    item {
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(14.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column {
+                    Text("متوسط نسبة الحضور للمجموعة", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(
+                        text = "%.1f%%".format(report.avgAttendanceRate),
+                        style = MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.Black),
+                        color = if (report.avgAttendanceRate >= 80f) EmeraldGreen else if (report.avgAttendanceRate >= 60f) WarmAmber else DangerRed
+                    )
+                }
+                Icon(
+                    imageVector = Icons.Default.Timeline,
+                    contentDescription = null,
+                    tint = PrimaryIndigo,
+                    modifier = Modifier.size(36.dp)
+                )
+            }
+        }
+    }
+
+    // Student List Section Title
+    sectionTitle("كشف طلاب المجموعة والضيوف (${report.studentList.size})")
+
+    if (report.studentList.isEmpty()) {
+        item {
+            EmptyState(message = "لا توجد سجلات حضور مسجلة لهذه المجموعة خلال الفترة المحددة", icon = Icons.Default.Person)
+        }
+    } else {
+        items(report.studentList) { item ->
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { onNavigateToStudentDetail(item.student.studentId) },
+                shape = RoundedCornerShape(12.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                border = BorderStroke(0.5.dp, MaterialTheme.colorScheme.outlineVariant)
+            ) {
+                Column(modifier = Modifier.padding(12.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        StudentAvatar(
+                            fullName = item.student.fullName,
+                            modifier = Modifier.size(40.dp)
+                        )
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    text = item.student.fullName,
+                                    style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Bold)
+                                )
+                                if (item.isGuest) {
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Surface(
+                                        shape = RoundedCornerShape(6.dp),
+                                        color = WarmAmberLight,
+                                        contentColor = WarmAmber
+                                    ) {
+                                        Text(
+                                            text = "ضيف (أصله: ${item.primaryGroupName})",
+                                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                        )
+                                    }
+                                }
+                            }
+                            if (item.student.studentCode.isNotBlank()) {
+                                Text(
+                                    text = "كود: #${item.student.studentCode}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+
+                        // Attendance Rate % Chip
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = if (item.attendanceRate >= 80f) EmeraldGreenLight else if (item.attendanceRate >= 60f) WarmAmberLight else DangerRedLight
+                        ) {
+                            Text(
+                                text = "%.0f%%".format(item.attendanceRate),
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                                color = if (item.attendanceRate >= 80f) EmeraldGreen else if (item.attendanceRate >= 60f) WarmAmber else DangerRed
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    // Breakdown chips row: Present, Absent, Late, Excused
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Surface(
+                            shape = RoundedCornerShape(6.dp),
+                            color = EmeraldGreenLight,
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(vertical = 4.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally
+                            ) {
+                                Text("حاضر 🟢", style = MaterialTheme.typography.labelSmall, color = EmeraldGreen)
+                                Text("${item.presentCount}", style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold), color = EmeraldGreen)
+                            }
+                        }
+
+                        Surface(
+                            shape = RoundedCornerShape(6.dp),
+                            color = DangerRedLight,
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(vertical = 4.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally
+                            ) {
+                                Text("غائب 🔴", style = MaterialTheme.typography.labelSmall, color = DangerRed)
+                                Text("${item.absentCount}", style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold), color = DangerRed)
+                            }
+                        }
+
+                        if (item.lateCount > 0) {
+                            Surface(
+                                shape = RoundedCornerShape(6.dp),
+                                color = WarmAmberLight,
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Column(
+                                    modifier = Modifier.padding(vertical = 4.dp),
+                                    horizontalAlignment = Alignment.CenterHorizontally
+                                ) {
+                                    Text("متأخر 🟡", style = MaterialTheme.typography.labelSmall, color = WarmAmber)
+                                    Text("${item.lateCount}", style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold), color = WarmAmber)
+                                }
+                            }
+                        }
+
+                        if (item.excusedCount > 0) {
+                            Surface(
+                                shape = RoundedCornerShape(6.dp),
+                                color = PrimaryIndigoLight,
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Column(
+                                    modifier = Modifier.padding(vertical = 4.dp),
+                                    horizontalAlignment = Alignment.CenterHorizontally
+                                ) {
+                                    Text("عذر 🔵", style = MaterialTheme.typography.labelSmall, color = PrimaryIndigo)
+                                    Text("${item.excusedCount}", style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold), color = PrimaryIndigo)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 fun LazyListScope.groupDailyReportContent(
     uiState: ReportsUiState,
     onNavigateToStudentDetail: (String) -> Unit
