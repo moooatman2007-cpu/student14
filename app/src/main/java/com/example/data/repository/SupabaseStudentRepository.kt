@@ -339,7 +339,8 @@ class SupabaseStudentRepository(
                 fullName = safeStudent.fullName.trim(),
                 parentPhone = safeStudent.parentPhone.trim(),
                 hasWhatsApp = safeStudent.hasWhatsApp,
-                alternativePhone = safeStudent.alternativePhone?.trim()?.ifBlank { null }
+                alternativePhone = safeStudent.alternativePhone?.trim()?.ifBlank { null },
+                groupId = safeStudent.groupId
             )
 
             val updatedStudent = client.postgrest["students"]
@@ -381,7 +382,8 @@ class SupabaseStudentRepository(
                     fullName = safeStudent.fullName.trim(),
                     parentPhone = safeStudent.parentPhone.trim(),
                     hasWhatsApp = safeStudent.hasWhatsApp,
-                    alternativePhone = safeStudent.alternativePhone?.trim()?.ifBlank { null }
+                    alternativePhone = safeStudent.alternativePhone?.trim()?.ifBlank { null },
+                    groupId = safeStudent.groupId
                 )
                 val payload = Json.encodeToString(request)
                 outboxDao?.insertOperation(

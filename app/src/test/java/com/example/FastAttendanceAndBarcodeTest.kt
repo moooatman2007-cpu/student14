@@ -136,7 +136,8 @@ class FastAttendanceAndBarcodeTest {
 
     /**
      * Requirement C:
-     * Student from another Grade is rejected when scanned.
+     * Student from another Grade is accepted as a Guest Student when scanned.
+     * Primary grade remains unchanged.
      */
     @Test
     fun testC_studentFromAnotherGrade_isRejectedOnBarcodeScan() = runTest {
@@ -164,13 +165,16 @@ class FastAttendanceAndBarcodeTest {
         val feedback = viewModel.uiState.value.scanFeedback
 
         assertNotNull(feedback)
-        assertEquals(ScanResultType.WRONG_GROUP, feedback?.type)
-        assertFalse(viewModel.uiState.value.presentStudentIds.contains("s2"))
+        assertEquals(ScanResultType.SUCCESS_PRESENT, feedback?.type)
+        assertTrue(viewModel.uiState.value.presentStudentIds.contains("s2"))
+        assertEquals("s2", feedback?.student?.studentId)
+        assertEquals(grade2.id, s2.gradeId)
     }
 
     /**
      * Requirement D:
-     * Student from previous stage is rejected when current Grade is selected.
+     * Student from previous stage is accepted as a Guest Student when scanned.
+     * Primary stage/grade remains unchanged.
      */
     @Test
     fun testD_studentFromPreviousStage_isRejectedWhenSecondaryGradeSelected() = runTest {
@@ -209,8 +213,10 @@ class FastAttendanceAndBarcodeTest {
         val feedback = viewModel.uiState.value.scanFeedback
 
         assertNotNull(feedback)
-        assertEquals(ScanResultType.WRONG_GROUP, feedback?.type)
-        assertFalse(viewModel.uiState.value.presentStudentIds.contains(previousStageStudent.studentId))
+        assertEquals(ScanResultType.SUCCESS_PRESENT, feedback?.type)
+        assertTrue(viewModel.uiState.value.presentStudentIds.contains(previousStageStudent.studentId))
+        assertEquals(previousStageStudent.studentId, feedback?.student?.studentId)
+        assertEquals("middle_prep_grade_99", previousStageStudent.gradeId)
     }
 
     /**
@@ -515,6 +521,7 @@ class FastAttendanceAndBarcodeTest {
             }
             override suspend fun deleteAttendance(attendanceId: String): Result<Unit> = Result.success(Unit)
             override suspend fun getAttendanceByDate(studentId: String, date: String): Attendance? = null
+            override suspend fun getAttendanceForDateAndGroup(date: String, groupId: String?): List<Attendance> = emptyList()
         }
 
         val viewModel = FastAttendanceViewModel(
@@ -584,6 +591,7 @@ class FastAttendanceAndBarcodeTest {
             }
             override suspend fun deleteAttendance(attendanceId: String): Result<Unit> = Result.success(Unit)
             override suspend fun getAttendanceByDate(studentId: String, date: String): Attendance? = attendanceRepository.getAttendanceByDate(studentId, date)
+            override suspend fun getAttendanceForDateAndGroup(date: String, groupId: String?): List<Attendance> = attendanceRepository.getAttendanceForDateAndGroup(date, groupId)
         }
 
         val viewModel = FastAttendanceViewModel(

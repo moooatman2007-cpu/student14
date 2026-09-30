@@ -52,7 +52,10 @@ data class MoreUiState(
     val pairingCode: String? = null,
     val isRequestingPairingCode: Boolean = false,
     val pairingCodeError: String? = null,
-    val isPairingCodeExpired: Boolean = false
+    val isPairingCodeExpired: Boolean = false,
+    val isSyncingWahaConfig: Boolean = false,
+    val wahaSyncSuccessMessage: String? = null,
+    val wahaSyncErrorMessage: String? = null
 )
 
 class MoreViewModel(
@@ -146,7 +149,7 @@ class MoreViewModel(
                         _uiState.update {
                             it.copy(
                                 wahaSessionStatus = status,
-                                wahaConnectedPhone = if (connectedPhone.isNotBlank()) connectedPhone else null
+                                wahaConnectedPhone = if (connectedPhone.isNotBlank() && connectedPhone != "null") connectedPhone else null
                             )
                         }
                     }
@@ -386,6 +389,8 @@ class MoreViewModel(
             it.copy(
                 showWahaPairingDialog = true,
                 wahaPairingError = null,
+                wahaSyncSuccessMessage = null,
+                wahaSyncErrorMessage = null,
                 selectedPairingTab = "CODE",
                 pairingPhoneNumber = initialPhone,
                 pairingCode = null,
@@ -398,6 +403,103 @@ class MoreViewModel(
         val status = _uiState.value.wahaSessionStatus
         if (status != "CONNECTED" && status != "WORKING") {
             startWaha()
+        }
+    }
+
+    fun syncWahaConfig() {
+        if (_uiState.value.isSyncingWahaConfig) return // Prevent repeated clicks
+
+        viewModelScope.launch {
+            _uiState.update {
+                it.copy(
+                    isSyncingWahaConfig = true,
+                    wahaSyncSuccessMessage = null,
+                    wahaSyncErrorMessage = null
+                )
+            }
+
+            try {
+                val token = SupabaseClientProvider.client.auth.currentAccessTokenOrNull()
+
+                val jsonObject = JSONObject()
+                jsonObject.put("action", "START")
+                val bodyString = jsonObject.toString()
+
+                val requestBody = bodyString.toRequestBody("application/json; charset=utf-8".toMediaTypeOrNull())
+
+                val requestBuilder = Request.Builder()
+                    .url(wahaSessionUrl)
+                    .post(requestBody)
+
+                if (!token.isNullOrBlank()) {
+                    requestBuilder.header("Authorization", "Bearer $token")
+                }
+
+                val response = withContext(ioDispatcher) {
+                    okHttpClient.newCall(requestBuilder.build()).execute()
+                }
+
+                response.use { res ->
+                    val responseStr = res.body?.string() ?: ""
+                    val resJson = try {
+                        if (responseStr.isNotBlank()) JSONObject(responseStr) else null
+                    } catch (_: Exception) {
+                        null
+                    }
+
+                    if (!res.isSuccessful) {
+                        val errorMsg = resJson?.optString("message")?.takeIf { it.isNotBlank() }
+                            ?: "فشل مزامنة إعدادات WhatsApp (رمز الخطأ: ${res.code})"
+                        _uiState.update {
+                            it.copy(
+                                isSyncingWahaConfig = false,
+                                wahaSyncErrorMessage = errorMsg
+                            )
+                        }
+                        return@launch
+                    }
+
+                    val success = resJson?.optBoolean("success", false) ?: false
+                    if (success) {
+                        val status = resJson?.optString("session_status", resJson.optString("status", "")) ?: ""
+                        val connectedPhone = resJson?.optString("connected_phone", "")
+
+                        _uiState.update {
+                            it.copy(
+                                isSyncingWahaConfig = false,
+                                wahaSyncSuccessMessage = "تمت مزامنة إعدادات WhatsApp بنجاح",
+                                wahaSessionStatus = if (status.isNotBlank()) status else it.wahaSessionStatus,
+                                wahaConnectedPhone = if (!connectedPhone.isNullOrBlank() && connectedPhone != "null") connectedPhone else it.wahaConnectedPhone
+                            )
+                        }
+                    } else {
+                        val errorMsg = resJson?.optString("message")?.takeIf { it.isNotBlank() }
+                            ?: "تعذر مزامنة إعدادات WhatsApp"
+                        _uiState.update {
+                            it.copy(
+                                isSyncingWahaConfig = false,
+                                wahaSyncErrorMessage = errorMsg
+                            )
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                _uiState.update {
+                    it.copy(
+                        isSyncingWahaConfig = false,
+                        wahaSyncErrorMessage = e.localizedMessage ?: "حدث خطأ أثناء الاتصال بالخادم"
+                    )
+                }
+            }
+        }
+    }
+
+    fun dismissWahaSyncStatus() {
+        _uiState.update {
+            it.copy(
+                wahaSyncSuccessMessage = null,
+                wahaSyncErrorMessage = null
+            )
         }
     }
 
@@ -489,7 +591,7 @@ class MoreViewModel(
                         it.copy(
                             isStartingWaha = false,
                             wahaSessionStatus = status,
-                            wahaConnectedPhone = if (connectedPhone.isNotBlank()) connectedPhone else null,
+                            wahaConnectedPhone = if (connectedPhone.isNotBlank() && connectedPhone != "null") connectedPhone else null,
                             wahaQrBase64 = if (!qrData.isNullOrBlank()) qrData else null
                         )
                     }
@@ -630,7 +732,7 @@ class MoreViewModel(
                         _uiState.update {
                             it.copy(
                                 wahaSessionStatus = status,
-                                wahaConnectedPhone = if (connectedPhone.isNotBlank()) connectedPhone else null,
+                                wahaConnectedPhone = if (connectedPhone.isNotBlank() && connectedPhone != "null") connectedPhone else null,
                                 wahaQrBase64 = if (!qrData.isNullOrBlank()) qrData else null
                             )
                         }

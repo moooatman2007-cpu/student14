@@ -8,6 +8,8 @@ import com.example.data.repository.MockGradeRepository
 import com.example.data.repository.MockPaymentRepository
 import com.example.data.repository.MockStudentRepository
 import com.example.ui.attendance.FastAttendanceViewModel
+import java.time.LocalDate
+import java.time.format.DateTimeFormatter
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.first
@@ -32,6 +34,7 @@ import org.robolectric.annotation.Config
 class FastAttendancePersistenceTest {
 
     private val testDispatcher = StandardTestDispatcher()
+    private val currentDate = LocalDate.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd"))
     private lateinit var gradeRepository: MockGradeRepository
     private lateinit var studentRepository: MockStudentRepository
     private lateinit var attendanceRepository: MockAttendanceRepository
@@ -90,7 +93,7 @@ class FastAttendancePersistenceTest {
         viewModel.finishAttendance()
         advanceUntilIdle()
 
-        val savedRecords = attendanceRepository.getAttendanceForDateAndGroup("2026-09-27", null)
+        val savedRecords = attendanceRepository.getAttendanceForDateAndGroup(currentDate, null)
         val presentRecord = savedRecords.find { it.studentId == "std_00011" }
         assertNotNull(presentRecord)
         assertEquals(AttendanceStatus.PRESENT, presentRecord?.status)
@@ -147,7 +150,7 @@ class FastAttendancePersistenceTest {
         viewModel2.finishAttendance()
         advanceUntilIdle()
 
-        val savedRecords = attendanceRepository.getAttendanceForDateAndGroup("2026-09-27", null)
+        val savedRecords = attendanceRepository.getAttendanceForDateAndGroup(currentDate, null)
         val st11 = savedRecords.find { it.studentId == "std_00011" }
         val st04 = savedRecords.find { it.studentId == "std_00004" }
 
@@ -166,8 +169,8 @@ class FastAttendancePersistenceTest {
         val students = createTestStudents(14, targetGrade.id)
 
         // Pre-save ST-00004 as ABSENT
-        attendanceRepository.recordOrUpdateAttendance("std_00004", "2026-09-27", AttendanceStatus.ABSENT, null, null)
-        val initialAtt = attendanceRepository.getAttendanceByDate("std_00004", "2026-09-27")
+        attendanceRepository.recordOrUpdateAttendance("std_00004", currentDate, AttendanceStatus.ABSENT, null, null)
+        val initialAtt = attendanceRepository.getAttendanceByDate("std_00004", currentDate)
         assertNotNull(initialAtt)
         val initialAttendanceId = initialAtt?.attendanceId
 
@@ -190,7 +193,7 @@ class FastAttendancePersistenceTest {
         viewModel.finishAttendance()
         advanceUntilIdle()
 
-        val updatedAtt = attendanceRepository.getAttendanceByDate("std_00004", "2026-09-27")
+        val updatedAtt = attendanceRepository.getAttendanceByDate("std_00004", currentDate)
         assertEquals(AttendanceStatus.PRESENT, updatedAtt?.status)
         assertEquals(initialAttendanceId, updatedAtt?.attendanceId) // Same attendance_id, updated not inserted
     }
@@ -222,7 +225,7 @@ class FastAttendancePersistenceTest {
         viewModel.finishAttendance()
         advanceUntilIdle()
 
-        val savedRecords = attendanceRepository.getAttendanceForDateAndGroup("2026-09-27", null)
+        val savedRecords = attendanceRepository.getAttendanceForDateAndGroup(currentDate, null)
         val studentRecords = savedRecords.filter { it.studentId == "std_00002" }
         assertEquals(1, studentRecords.size)
         assertEquals(AttendanceStatus.PRESENT, studentRecords[0].status)
@@ -235,7 +238,7 @@ class FastAttendancePersistenceTest {
         val students = createTestStudents(5, targetGrade.id)
 
         // Pre-save ST-00001 as PRESENT
-        attendanceRepository.recordOrUpdateAttendance("std_00001", "2026-09-27", AttendanceStatus.PRESENT, null, null)
+        attendanceRepository.recordOrUpdateAttendance("std_00001", currentDate, AttendanceStatus.PRESENT, null, null)
 
         val viewModel = FastAttendanceViewModel(
             studentRepository = studentRepository,
@@ -255,7 +258,7 @@ class FastAttendancePersistenceTest {
         viewModel.finishAttendance()
         advanceUntilIdle()
 
-        val updatedAtt = attendanceRepository.getAttendanceByDate("std_00001", "2026-09-27")
+        val updatedAtt = attendanceRepository.getAttendanceByDate("std_00001", currentDate)
         assertEquals(AttendanceStatus.PRESENT, updatedAtt?.status)
     }
 
@@ -267,7 +270,7 @@ class FastAttendancePersistenceTest {
         val students = createTestStudents(5, targetGrade.id, groupId = groupId)
 
         // Pre-save group attendance
-        attendanceRepository.recordOrUpdateAttendance("std_00001", "2026-09-27", AttendanceStatus.PRESENT, "Group session", groupId)
+        attendanceRepository.recordOrUpdateAttendance("std_00001", currentDate, AttendanceStatus.PRESENT, "Group session", groupId)
 
         val viewModel = FastAttendanceViewModel(
             studentRepository = studentRepository,
@@ -287,7 +290,7 @@ class FastAttendancePersistenceTest {
         viewModel.finishAttendance()
         advanceUntilIdle()
 
-        val groupRecords = attendanceRepository.getAttendanceForDateAndGroup("2026-09-27", groupId)
+        val groupRecords = attendanceRepository.getAttendanceForDateAndGroup(currentDate, groupId)
         val st1 = groupRecords.find { it.studentId == "std_00001" }
         assertEquals(AttendanceStatus.PRESENT, st1?.status)
         assertEquals(groupId, st1?.groupId)

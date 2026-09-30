@@ -228,7 +228,8 @@ class AttendanceByGroupTest {
     }
 
     /**
-     * 5. Barcode لطالب Group B → رفض مع ScanResultType.WRONG_GROUP وعدم تسجيل الحضور
+     * 5. Barcode لطالب Group B في جلسة Group A → قبول كـ Guest Student مع ScanResultType.SUCCESS_PRESENT
+     * وتسجيل حضوره في الجلسة دون تغيير مجموعته الأصلية (group_id = grp_B)
      */
     @Test
     fun test5_barcodeScan_groupBStudent_rejectedWithWrongGroup() = runTest {
@@ -243,9 +244,14 @@ class AttendanceByGroupTest {
 
         vm.processScannedBarcode("BAR_B1")
         val state = vm.uiState.value
-        assertEquals(ScanResultType.WRONG_GROUP, state.scanFeedback?.type)
-        assertFalse(state.presentStudentIds.contains("std_b1"))
-        assertEquals(0, state.presentStudentIds.size)
+        assertEquals(ScanResultType.SUCCESS_PRESENT, state.scanFeedback?.type)
+        assertTrue(state.presentStudentIds.contains("std_b1"))
+        assertTrue(state.extraSessionStudents.any { it.studentId == "std_b1" })
+        assertEquals(1, state.presentStudentIds.size)
+
+        // Verify student's primary group is unchanged
+        val student = allStudents.find { it.studentId == "std_b1" }
+        assertEquals("grp_B", student?.groupId)
     }
 
     /**

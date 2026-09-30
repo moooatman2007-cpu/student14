@@ -524,49 +524,45 @@ class SupabaseAttendanceRepository(
             }
 
             for (req in withoutGroup) {
-                try {
-                    val existingList = client.postgrest["attendance"].select {
+                val existingList = client.postgrest["attendance"].select {
+                    filter {
+                        eq("student_id", req.studentId)
+                        eq("date", date)
+                        eq("teacher_id", teacherId)
+                    }
+                }.decodeList<SupabaseAttendanceDto>()
+
+                val existing = existingList.find { it.groupId == null }
+                if (existing != null) {
+                    client.postgrest["attendance"].update(req) {
                         filter {
-                            eq("student_id", req.studentId)
-                            eq("date", date)
+                            eq("id", existing.id ?: "")
                             eq("teacher_id", teacherId)
                         }
-                    }.decodeList<SupabaseAttendanceDto>()
-
-                    val existing = existingList.find { it.groupId == null }
-                    if (existing != null) {
-                        client.postgrest["attendance"].update(req) {
+                    }
+                } else {
+                    try {
+                        client.postgrest["attendance"].insert(req)
+                    } catch (insEx: Exception) {
+                        val recheckList = client.postgrest["attendance"].select {
                             filter {
-                                eq("id", existing.id ?: "")
+                                eq("student_id", req.studentId)
+                                eq("date", date)
                                 eq("teacher_id", teacherId)
                             }
-                        }
-                    } else {
-                        try {
-                            client.postgrest["attendance"].insert(req)
-                        } catch (insEx: Exception) {
-                            val recheckList = client.postgrest["attendance"].select {
+                        }.decodeList<SupabaseAttendanceDto>()
+                        val recheck = recheckList.find { it.groupId == null }
+                        if (recheck != null) {
+                            client.postgrest["attendance"].update(req) {
                                 filter {
-                                    eq("student_id", req.studentId)
-                                    eq("date", date)
+                                    eq("id", recheck.id ?: "")
                                     eq("teacher_id", teacherId)
                                 }
-                            }.decodeList<SupabaseAttendanceDto>()
-                            val recheck = recheckList.find { it.groupId == null }
-                            if (recheck != null) {
-                                client.postgrest["attendance"].update(req) {
-                                    filter {
-                                        eq("id", recheck.id ?: "")
-                                        eq("teacher_id", teacherId)
-                                    }
-                                }
-                            } else {
-                                throw insEx
                             }
+                        } else {
+                            throw insEx
                         }
                     }
-                } catch (itemEx: Exception) {
-                    android.util.Log.e("SupabaseAttendanceRepo", "Failed batch item for student ${req.studentId}: ${itemEx.message}")
                 }
             }
 

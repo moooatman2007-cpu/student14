@@ -41,6 +41,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
@@ -335,11 +336,33 @@ fun MoreScreen(
                         SettingMenuItem(
                             icon = Icons.Default.Language,
                             title = "ربط WhatsApp",
-                            subtitle = "ربط حسابك لإرسال الرسائل والتقارير تلقائياً",
+                            subtitle = if (uiState.wahaSessionStatus == "CONNECTED" || uiState.wahaSessionStatus == "WORKING") {
+                                "متصل (${uiState.wahaConnectedPhone ?: "جاهز"}) • إدارة الحساب"
+                            } else {
+                                "ربط حسابك لإرسال الرسائل والتقارير تلقائياً"
+                            },
                             iconBg = Color(0xFFE8F5E9),
                             iconColor = Color(0xFF2E7D32),
                             onClick = viewModel::openWahaPairingDialog,
                             testTag = "setting_waha_pairing"
+                        )
+                        HorizontalDivider(
+                            color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f),
+                            modifier = Modifier.padding(horizontal = Dimens.Spacing16)
+                        )
+
+                        // 6.c مزامنة إعدادات WhatsApp
+                        SettingMenuItem(
+                            icon = Icons.Default.Notifications,
+                            title = "مزامنة إعدادات WhatsApp",
+                            subtitle = "مزامنة الـ Webhooks وإعدادات الجلسة مع الخادم",
+                            iconBg = Color(0xFFE0E7FF),
+                            iconColor = PrimaryIndigo,
+                            onClick = {
+                                viewModel.openWahaPairingDialog()
+                                viewModel.syncWahaConfig()
+                            },
+                            testTag = "setting_waha_sync"
                         )
                         HorizontalDivider(
                             color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f),
@@ -737,12 +760,91 @@ fun MoreScreen(
                                         textAlign = TextAlign.Center
                                     )
                                 }
-                                Spacer(modifier = Modifier.height(Dimens.Spacing24))
+
+                                if (uiState.wahaSyncSuccessMessage != null) {
+                                    Spacer(modifier = Modifier.height(Dimens.Spacing12))
+                                    Surface(
+                                        color = Color(0xFFDCFCE7),
+                                        shape = RoundedCornerShape(8.dp),
+                                        modifier = Modifier.fillMaxWidth().padding(horizontal = Dimens.Spacing8)
+                                    ) {
+                                        Text(
+                                            text = uiState.wahaSyncSuccessMessage!!,
+                                            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
+                                            color = Color(0xFF16A34A),
+                                            textAlign = TextAlign.Center,
+                                            modifier = Modifier.padding(horizontal = Dimens.Spacing12, vertical = Dimens.Spacing8)
+                                        )
+                                    }
+                                }
+
+                                if (uiState.wahaSyncErrorMessage != null) {
+                                    Spacer(modifier = Modifier.height(Dimens.Spacing12))
+                                    Surface(
+                                        color = MaterialTheme.colorScheme.errorContainer,
+                                        shape = RoundedCornerShape(8.dp),
+                                        modifier = Modifier.fillMaxWidth().padding(horizontal = Dimens.Spacing8)
+                                    ) {
+                                        Text(
+                                            text = uiState.wahaSyncErrorMessage!!,
+                                            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
+                                            color = MaterialTheme.colorScheme.onErrorContainer,
+                                            textAlign = TextAlign.Center,
+                                            modifier = Modifier.padding(horizontal = Dimens.Spacing12, vertical = Dimens.Spacing8)
+                                        )
+                                    }
+                                }
+
+                                Spacer(modifier = Modifier.height(Dimens.Spacing20))
+
+                                // زر مزامنة إعدادات WhatsApp الإداري
+                                Button(
+                                    onClick = viewModel::syncWahaConfig,
+                                    enabled = !uiState.isSyncingWahaConfig,
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = PrimaryIndigo,
+                                        contentColor = Color.White
+                                    ),
+                                    shape = RoundedCornerShape(12.dp),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .testTag("sync_waha_config_button")
+                                ) {
+                                    if (uiState.isSyncingWahaConfig) {
+                                        CircularProgressIndicator(
+                                            modifier = Modifier.size(18.dp),
+                                            color = Color.White,
+                                            strokeWidth = 2.dp
+                                        )
+                                        Spacer(modifier = Modifier.width(Dimens.Spacing8))
+                                        Text(
+                                            text = "جاري مزامنة إعدادات WhatsApp...",
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    } else {
+                                        Icon(
+                                            imageVector = Icons.Default.Notifications,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(Dimens.Spacing8))
+                                        Text(
+                                            text = "مزامنة إعدادات WhatsApp",
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
+                                }
+
+                                Spacer(modifier = Modifier.height(Dimens.Spacing12))
+
                                 Button(
                                     onClick = viewModel::logoutWaha,
+                                    enabled = !uiState.isSyncingWahaConfig,
                                     colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
                                     shape = RoundedCornerShape(12.dp),
-                                    modifier = Modifier.testTag("logout_waha_button")
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .testTag("logout_waha_button")
                                 ) {
                                     Text("قطع الاتصال بالحساب")
                                 }
@@ -1172,6 +1274,67 @@ fun MoreScreen(
                                             Text("إنشاء كود جديد", style = MaterialTheme.typography.bodySmall, color = PrimaryIndigo)
                                         }
                                     }
+                                }
+                            }
+                        }
+
+                        if (uiState.wahaSessionStatus != "CONNECTED" && uiState.wahaSessionStatus != "WORKING") {
+                            Spacer(modifier = Modifier.height(Dimens.Spacing8))
+                            if (uiState.wahaSyncSuccessMessage != null) {
+                                Surface(
+                                    color = Color(0xFFDCFCE7),
+                                    shape = RoundedCornerShape(8.dp),
+                                    modifier = Modifier.fillMaxWidth().padding(horizontal = Dimens.Spacing8)
+                                ) {
+                                    Text(
+                                        text = uiState.wahaSyncSuccessMessage!!,
+                                        style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold),
+                                        color = Color(0xFF16A34A),
+                                        textAlign = TextAlign.Center,
+                                        modifier = Modifier.padding(horizontal = Dimens.Spacing12, vertical = Dimens.Spacing8)
+                                    )
+                                }
+                                Spacer(modifier = Modifier.height(Dimens.Spacing8))
+                            }
+                            if (uiState.wahaSyncErrorMessage != null) {
+                                Surface(
+                                    color = MaterialTheme.colorScheme.errorContainer,
+                                    shape = RoundedCornerShape(8.dp),
+                                    modifier = Modifier.fillMaxWidth().padding(horizontal = Dimens.Spacing8)
+                                ) {
+                                    Text(
+                                        text = uiState.wahaSyncErrorMessage!!,
+                                        style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold),
+                                        color = MaterialTheme.colorScheme.onErrorContainer,
+                                        textAlign = TextAlign.Center,
+                                        modifier = Modifier.padding(horizontal = Dimens.Spacing12, vertical = Dimens.Spacing8)
+                                    )
+                                }
+                                Spacer(modifier = Modifier.height(Dimens.Spacing8))
+                            }
+                            OutlinedButton(
+                                onClick = viewModel::syncWahaConfig,
+                                enabled = !uiState.isSyncingWahaConfig,
+                                shape = RoundedCornerShape(12.dp),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("sync_waha_config_button_idle")
+                            ) {
+                                if (uiState.isSyncingWahaConfig) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(16.dp),
+                                        strokeWidth = 2.dp
+                                    )
+                                    Spacer(modifier = Modifier.width(Dimens.Spacing8))
+                                    Text(
+                                        text = "جاري مزامنة إعدادات WhatsApp...",
+                                        style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold)
+                                    )
+                                } else {
+                                    Text(
+                                        text = "مزامنة إعدادات WhatsApp",
+                                        style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold)
+                                    )
                                 }
                             }
                         }

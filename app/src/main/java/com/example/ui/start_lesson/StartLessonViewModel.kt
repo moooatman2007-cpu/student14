@@ -4,13 +4,18 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.core.model.AttendanceStatus
 import com.example.core.model.BatchAttendanceItemDto
+import com.example.core.model.BatchSyncStatus
 import com.example.core.model.Grade
 import com.example.core.model.HomeworkStatus
+import com.example.core.model.NotificationEvent
+import com.example.core.model.NotificationEventType
 import com.example.core.model.Student
 import com.example.data.repository.AttendanceRepository
 import com.example.data.repository.ExamRepository
 import com.example.data.repository.HomeworkRepository
 import com.example.data.repository.GradeRepository
+import com.example.data.repository.NotificationEventCreationResult
+import com.example.data.repository.NotificationEventRepository
 import com.example.data.repository.PaymentRepository
 import com.example.data.repository.RecitationRepository
 import com.example.data.repository.RepositoryProvider
@@ -35,7 +40,8 @@ enum class StartLessonStep {
     RECITATION,
     HOMEWORK,
     EXAM,
-    REVIEW
+    REVIEW,
+    NOTIFICATION_REVIEW
 }
 
 data class StudentRecitationInput(
@@ -61,6 +67,72 @@ data class StudentExamInput(
     val note: String = "",
     val isRecorded: Boolean = false
 )
+
+data class LessonSavedItem(
+    val studentId: String,
+    val sourceId: String,
+    val eventType: NotificationEventType,
+    val isConfirmedOnline: Boolean = true
+)
+
+data class LessonSavedContext(
+    val absenceItems: List<LessonSavedItem> = emptyList(),
+    val recitationItems: List<LessonSavedItem> = emptyList(),
+    val homeworkItems: List<LessonSavedItem> = emptyList(),
+    val examItems: List<LessonSavedItem> = emptyList()
+) {
+    val totalItemsCount: Int
+        get() = absenceItems.size + recitationItems.size + homeworkItems.size + examItems.size
+}
+
+data class NotificationReviewItem(
+    val studentId: String,
+    val sourceId: String,
+    val eventType: NotificationEventType,
+    val studentName: String,
+    val parentPhone: String,
+    val whatsappEnabled: Boolean,
+    val isConfirmedOnline: Boolean,
+    val eligibleForNotification: Boolean,
+    val ineligibilityReason: String? = null
+)
+
+data class NotificationReviewState(
+    val absenceItems: List<NotificationReviewItem> = emptyList(),
+    val recitationItems: List<NotificationReviewItem> = emptyList(),
+    val homeworkItems: List<NotificationReviewItem> = emptyList(),
+    val examItems: List<NotificationReviewItem> = emptyList(),
+    val totalStudents: Int = 0,
+    val presentStudents: Int = 0,
+    val absentStudents: Int = 0,
+    val recitationCount: Int = 0,
+    val homeworkCount: Int = 0,
+    val examCount: Int = 0
+) {
+    val totalReviewItems: Int
+        get() = absenceItems.size + recitationItems.size + homeworkItems.size + examItems.size
+
+    val totalEligibleItems: Int
+        get() = (absenceItems + recitationItems + homeworkItems + examItems).count { it.eligibleForNotification }
+}
+
+data class FailedNotificationItem(
+    val studentId: String,
+    val sourceId: String,
+    val eventType: NotificationEventType,
+    val message: String
+)
+
+data class NotificationEventCreationSummary(
+    val createdCount: Int = 0,
+    val alreadyExistsCount: Int = 0,
+    val failedCount: Int = 0,
+    val skippedCount: Int = 0,
+    val failedItems: List<FailedNotificationItem> = emptyList()
+) {
+    val totalProcessed: Int
+        get() = createdCount + alreadyExistsCount + failedCount + skippedCount
+}
 
 data class StartLessonUiState(
     val currentStep: StartLessonStep = StartLessonStep.SELECT_GROUP,
@@ -93,7 +165,11 @@ data class StartLessonUiState(
     val isSaving: Boolean = false,
     val errorMessage: String? = null,
     val showUnrecordedWarning: Boolean = false,
-    val isFinished: Boolean = false
+    val isFinished: Boolean = false,
+    val savedContext: LessonSavedContext? = null,
+    val reviewState: NotificationReviewState? = null,
+    val isSubmittingNotifications: Boolean = false,
+    val notificationCreationSummary: NotificationEventCreationSummary? = null
 )
 
 class StartLessonViewModel(
@@ -103,7 +179,8 @@ class StartLessonViewModel(
     private val recitationRepository: RecitationRepository = RepositoryProvider.recitationRepository,
     private val homeworkRepository: HomeworkRepository = RepositoryProvider.homeworkRepository,
     private val examRepository: ExamRepository = RepositoryProvider.examRepository,
-    private val paymentRepository: PaymentRepository = RepositoryProvider.paymentRepository
+    private val paymentRepository: PaymentRepository = RepositoryProvider.paymentRepository,
+    private val notificationEventRepository: NotificationEventRepository = RepositoryProvider.notificationEventRepository
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(StartLessonUiState())
@@ -302,21 +379,55 @@ class StartLessonViewModel(
             try {
                 val date = state.currentDate
                 val students = state.studentsInGroup
+                val groupId = state.selectedGradeId
+
+                // Identify students who are absent
+                val absentStudentIds = students
+                    .filter { !state.presentStudentIds.contains(it.studentId) }
+                    .map { it.studentId }
+                    .toSet()
 
                 // 1. Record Attendance
                 val attRecords = students.map { s ->
                     val status = if (state.presentStudentIds.contains(s.studentId)) AttendanceStatus.PRESENT else AttendanceStatus.ABSENT
                     BatchAttendanceItemDto(studentId = s.studentId, status = status.name, note = null)
                 }
-                attendanceRepository.recordBatchAttendance(date, attRecords)
+                val attResult = attendanceRepository.recordBatchAttendance(date, attRecords, groupId)
+                val isLessonCloudConfirmed = attResult.isSuccess && attResult.getOrNull()?.syncStatus == BatchSyncStatus.SAVED_TO_CLOUD
+
+                // 1.1 Match and collect Attendance Absence Source IDs
+                val absenceItems = mutableListOf<LessonSavedItem>()
+                if (absentStudentIds.isNotEmpty()) {
+                    try {
+                        val savedAttendanceList = attendanceRepository.getAttendanceForDateAndGroup(date, groupId)
+                        val savedMap = savedAttendanceList.associateBy { it.studentId }
+                        for (studentId in absentStudentIds) {
+                            val att = savedMap[studentId]
+                            if (att != null && att.status == AttendanceStatus.ABSENT && att.attendanceId.isNotBlank()) {
+                                val isOnline = isLessonCloudConfirmed && isServerUUID(att.attendanceId)
+                                absenceItems.add(
+                                    LessonSavedItem(
+                                        studentId = studentId,
+                                        sourceId = att.attendanceId,
+                                        eventType = NotificationEventType.ABSENCE,
+                                        isConfirmedOnline = isOnline
+                                    )
+                                )
+                            }
+                        }
+                    } catch (_: Exception) {
+                        // Resilient: lesson save does not fail if ID staging query encounters an issue
+                    }
+                }
 
                 // 2. Record Recitations if not skipped
+                val recitationItems = mutableListOf<LessonSavedItem>()
                 if (!state.skipRecitation) {
                     state.recitationsMap.forEach { (studentId, rec) ->
                         if (rec.content.isNotBlank() || rec.title.isNotBlank()) {
                             val score = rec.scoreStr.toDoubleOrNull() ?: 10.0
                             val maxScore = rec.maxScoreStr.toDoubleOrNull() ?: 10.0
-                            recitationRepository.addRecitation(
+                            val recRes = recitationRepository.addRecitation(
                                 studentId = studentId,
                                 date = date,
                                 title = rec.title.ifBlank { "تسميع الحصة" },
@@ -325,30 +436,54 @@ class StartLessonViewModel(
                                 maxScore = maxScore,
                                 note = rec.note.ifBlank { null }
                             )
+                            recRes.getOrNull()?.let { savedRec ->
+                                val isOnline = isLessonCloudConfirmed && isServerUUID(savedRec.recitationId)
+                                recitationItems.add(
+                                    LessonSavedItem(
+                                        studentId = studentId,
+                                        sourceId = savedRec.recitationId,
+                                        eventType = NotificationEventType.RECITATION,
+                                        isConfirmedOnline = isOnline
+                                    )
+                                )
+                            }
                         }
                     }
                 }
 
                 // 3. Record Homework if not skipped
+                val homeworkItems = mutableListOf<LessonSavedItem>()
                 if (!state.skipHomework) {
                     state.homeworkMap.forEach { (studentId, hw) ->
-                        homeworkRepository.addHomework(
+                        val hwRes = homeworkRepository.addHomework(
                             studentId = studentId,
                             date = date,
                             title = hw.title,
                             status = hw.status,
                             note = hw.note.ifBlank { null }
                         )
+                        hwRes.getOrNull()?.let { savedHw ->
+                            val isOnline = isLessonCloudConfirmed && isServerUUID(savedHw.homeworkId)
+                            homeworkItems.add(
+                                LessonSavedItem(
+                                    studentId = studentId,
+                                    sourceId = savedHw.homeworkId,
+                                    eventType = NotificationEventType.HOMEWORK,
+                                    isConfirmedOnline = isOnline
+                                )
+                            )
+                        }
                     }
                 }
 
                 // 4. Record Exam if not skipped
+                val examItems = mutableListOf<LessonSavedItem>()
                 if (!state.skipExam) {
                     state.examsMap.forEach { (studentId, ex) ->
                         if (ex.scoreStr.toDoubleOrNull() != null) {
                             val score = ex.scoreStr.toDoubleOrNull() ?: 0.0
                             val maxScore = ex.maxScoreStr.toDoubleOrNull() ?: 10.0
-                            examRepository.addExam(
+                            val exRes = examRepository.addExam(
                                 studentId = studentId,
                                 date = date,
                                 examName = ex.examName,
@@ -357,14 +492,221 @@ class StartLessonViewModel(
                                 maxScore = maxScore,
                                 note = ex.note.ifBlank { null }
                             )
+                            exRes.getOrNull()?.let { savedEx ->
+                                val isOnline = isLessonCloudConfirmed && isServerUUID(savedEx.examId)
+                                examItems.add(
+                                    LessonSavedItem(
+                                        studentId = studentId,
+                                        sourceId = savedEx.examId,
+                                        eventType = NotificationEventType.EXAM,
+                                        isConfirmedOnline = isOnline
+                                    )
+                                )
+                            }
                         }
                     }
                 }
 
-                _uiState.update { it.copy(isSaving = false, isFinished = true) }
+                val savedContext = LessonSavedContext(
+                    absenceItems = absenceItems,
+                    recitationItems = recitationItems,
+                    homeworkItems = homeworkItems,
+                    examItems = examItems
+                )
+
+                val reviewState = buildNotificationReviewState(
+                    savedContext = savedContext,
+                    students = students,
+                    presentStudentIds = state.presentStudentIds
+                )
+
+                _uiState.update {
+                    it.copy(
+                        isSaving = false,
+                        isFinished = true,
+                        currentStep = StartLessonStep.NOTIFICATION_REVIEW,
+                        savedContext = savedContext,
+                        reviewState = reviewState
+                    )
+                }
             } catch (e: Exception) {
                 _uiState.update { it.copy(isSaving = false, errorMessage = e.message ?: "حدث خطأ أثناء حفظ الحصة") }
             }
+        }
+    }
+
+    private fun buildNotificationReviewState(
+        savedContext: LessonSavedContext,
+        students: List<Student>,
+        presentStudentIds: Set<String>
+    ): NotificationReviewState {
+        val studentMap = students.associateBy { it.studentId }
+
+        fun mapToReviewItem(item: LessonSavedItem): NotificationReviewItem {
+            val student = studentMap[item.studentId]
+            val studentName = student?.fullName ?: "طالب"
+            val parentPhone = student?.parentPhone?.trim() ?: ""
+            val whatsappEnabled = student?.hasWhatsApp ?: false
+
+            val (isEligible, reason) = when {
+                !item.isConfirmedOnline -> Pair(false, "معلق حتى تكتمل المزامنة")
+                parentPhone.isBlank() -> Pair(false, "لا يوجد رقم هاتف لولي الأمر")
+                !whatsappEnabled -> Pair(false, "واتساب غير مفعّل للطالب")
+                item.sourceId.isBlank() -> Pair(false, "معرف المصدر غير صالح")
+                else -> Pair(true, null)
+            }
+
+            return NotificationReviewItem(
+                studentId = item.studentId,
+                sourceId = item.sourceId,
+                eventType = item.eventType,
+                studentName = studentName,
+                parentPhone = parentPhone,
+                whatsappEnabled = whatsappEnabled,
+                isConfirmedOnline = item.isConfirmedOnline,
+                eligibleForNotification = isEligible,
+                ineligibilityReason = reason
+            )
+        }
+
+        val totalStudents = students.size
+        val presentStudents = presentStudentIds.size
+        val absentStudents = totalStudents - presentStudents
+
+        return NotificationReviewState(
+            absenceItems = savedContext.absenceItems.map(::mapToReviewItem),
+            recitationItems = savedContext.recitationItems.map(::mapToReviewItem),
+            homeworkItems = savedContext.homeworkItems.map(::mapToReviewItem),
+            examItems = savedContext.examItems.map(::mapToReviewItem),
+            totalStudents = totalStudents,
+            presentStudents = presentStudents,
+            absentStudents = absentStudents,
+            recitationCount = savedContext.recitationItems.size,
+            homeworkCount = savedContext.homeworkItems.size,
+            examCount = savedContext.examItems.size
+        )
+    }
+
+    fun submitNotificationEvents(onComplete: (() -> Unit)? = null) {
+        val state = _uiState.value
+        if (state.isSubmittingNotifications) return // UX guard against rapid double taps
+
+        val review = state.reviewState ?: run {
+            onComplete?.invoke()
+            return
+        }
+
+        _uiState.update { it.copy(isSubmittingNotifications = true) }
+
+        viewModelScope.launch {
+            try {
+                val allReviewItems = review.absenceItems +
+                        review.recitationItems +
+                        review.homeworkItems +
+                        review.examItems
+
+                var createdCount = 0
+                var alreadyExistsCount = 0
+                var failedCount = 0
+                var skippedCount = 0
+                val failedList = mutableListOf<FailedNotificationItem>()
+
+                for (item in allReviewItems) {
+                    // Eligibility filter: strictly confirmed online, eligible, and valid IDs
+                    val isEligible = item.isConfirmedOnline &&
+                            item.eligibleForNotification &&
+                            item.studentId.isNotBlank() &&
+                            item.sourceId.isNotBlank()
+
+                    if (!isEligible) {
+                        skippedCount++
+                        continue
+                    }
+
+                    // Map domain NotificationEvent (teacherId is populated by repository from auth session)
+                    val domainEvent: NotificationEvent = when (item.eventType) {
+                        NotificationEventType.ABSENCE -> NotificationEvent.Absence(
+                            teacherId = "",
+                            studentId = item.studentId,
+                            attendanceId = item.sourceId
+                        )
+                        NotificationEventType.RECITATION -> NotificationEvent.Recitation(
+                            teacherId = "",
+                            studentId = item.studentId,
+                            recitationId = item.sourceId
+                        )
+                        NotificationEventType.HOMEWORK -> NotificationEvent.Homework(
+                            teacherId = "",
+                            studentId = item.studentId,
+                            homeworkId = item.sourceId
+                        )
+                        NotificationEventType.EXAM -> NotificationEvent.Exam(
+                            teacherId = "",
+                            studentId = item.studentId,
+                            examId = item.sourceId
+                        )
+                    }
+
+                    // Direct insert attempt without SELECT before INSERT
+                    val result = notificationEventRepository.createNotificationEvent(domainEvent)
+                    when (result) {
+                        is NotificationEventCreationResult.Created -> {
+                            createdCount++
+                        }
+                        is NotificationEventCreationResult.AlreadyExists -> {
+                            alreadyExistsCount++
+                        }
+                        is NotificationEventCreationResult.Failed -> {
+                            failedCount++
+                            failedList.add(
+                                FailedNotificationItem(
+                                    studentId = item.studentId,
+                                    sourceId = item.sourceId,
+                                    eventType = item.eventType,
+                                    message = result.message
+                                )
+                            )
+                        }
+                    }
+                }
+
+                val summary = NotificationEventCreationSummary(
+                    createdCount = createdCount,
+                    alreadyExistsCount = alreadyExistsCount,
+                    failedCount = failedCount,
+                    skippedCount = skippedCount,
+                    failedItems = failedList
+                )
+
+                _uiState.update {
+                    it.copy(
+                        isSubmittingNotifications = false,
+                        notificationCreationSummary = summary
+                    )
+                }
+
+                // If all attempted events succeeded or already existed without errors, proceed
+                if (failedCount == 0) {
+                    onComplete?.invoke()
+                }
+            } catch (e: Exception) {
+                _uiState.update {
+                    it.copy(
+                        isSubmittingNotifications = false,
+                        errorMessage = e.message ?: "حدث خطأ أثناء إنشاء أحداث الإشعارات"
+                    )
+                }
+            }
+        }
+    }
+
+    private fun isServerUUID(id: String): Boolean {
+        if (id.isBlank() || id.contains("_")) return false
+        return try {
+            java.util.UUID.fromString(id)
+            true
+        } catch (_: IllegalArgumentException) {
+            false
         }
     }
 

@@ -58,6 +58,10 @@ function normalizeEgyptianPhone(value: string): string | null {
     return digits.slice(2);
   }
 
+  if (digits.length >= 8 && digits.length <= 15) {
+    return digits;
+  }
+
   return null;
 }
 
@@ -169,6 +173,18 @@ function extractSender(payload: any): string | null {
   return null;
 }
 
+// Helper for timing-safe string comparison
+function timingSafeEqual(a: string, b: string): boolean {
+  if (a.length !== b.length) {
+    return false;
+  }
+  let mismatch = 0;
+  for (let i = 0; i < a.length; i++) {
+    mismatch |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  }
+  return mismatch === 0;
+}
+
 Deno.serve(async (req: Request) => {
   // 1. CORS Preflight
   if (req.method === "OPTIONS") {
@@ -181,15 +197,51 @@ Deno.serve(async (req: Request) => {
   }
 
   try {
-    // 3. Parse JSON Body
+    // 3. HMAC-SHA512 Webhook Verification
+    const webhookSecret = Deno.env.get("WAHA_WEBHOOK_SECRET");
+    if (!webhookSecret || !webhookSecret.trim()) {
+      console.error("WAHA_WEBHOOK_SECRET is not configured");
+      return jsonResponse({ ok: false, error: "Unauthorized webhook configuration" }, 401);
+    }
+
+    const hmacHeader = req.headers.get("X-Webhook-Hmac");
+    const algoHeader = req.headers.get("X-Webhook-Hmac-Algorithm");
+
+    if (!hmacHeader || !algoHeader || algoHeader.toLowerCase() !== "sha512") {
+      return jsonResponse({ ok: false, error: "Missing or invalid webhook security headers" }, 401);
+    }
+
+    const rawBody = await req.text();
+
+    const enc = new TextEncoder();
+    const keyData = enc.encode(webhookSecret.trim());
+    const msgData = enc.encode(rawBody);
+
+    const cryptoKey = await crypto.subtle.importKey(
+      "raw",
+      keyData,
+      { name: "HMAC", hash: "SHA-512" },
+      false,
+      ["sign"]
+    );
+
+    const signatureBuffer = await crypto.subtle.sign("HMAC", cryptoKey, msgData);
+    const signatureArray = Array.from(new Uint8Array(signatureBuffer));
+    const computedHex = signatureArray.map((b) => b.toString(16).padStart(2, "0")).join("");
+
+    if (!timingSafeEqual(computedHex.toLowerCase(), hmacHeader.trim().toLowerCase())) {
+      return jsonResponse({ ok: false, error: "Invalid webhook signature" }, 401);
+    }
+
+    // 4. Parse JSON Body from Verified Raw Body
     let body: any;
     try {
-      body = await req.json();
+      body = JSON.parse(rawBody);
     } catch {
       return jsonResponse({ ok: false, error: "Invalid JSON payload" }, 400);
     }
 
-    // 4. Basic Event Validation (Only process message events)
+    // 5. Basic Event Validation (Only process message events)
     const event = body?.event;
     if (event !== "message") {
       return jsonResponse({

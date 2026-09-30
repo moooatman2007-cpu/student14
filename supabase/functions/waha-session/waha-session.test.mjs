@@ -7,6 +7,7 @@ process.env.SUPABASE_ANON_KEY = "anon-key-12345";
 process.env.SUPABASE_SERVICE_ROLE_KEY = "service-role-secret-key-999";
 process.env.WAHA_BASE_URL = "https://waha.internal.server";
 process.env.WAHA_API_KEY = "waha-secret-key-99999";
+process.env.WAHA_WEBHOOK_SECRET = "webhook-secret-xyz";
 
 // Simulated Handler representing waha-session Edge Function behavior
 async function handleWahaSessionRequest(req, mocks = {}) {
@@ -58,8 +59,25 @@ async function handleWahaSessionRequest(req, mocks = {}) {
 
   const wahaBaseUrl = (process.env.WAHA_BASE_URL || "").replace(/\/+$/, "");
   const wahaApiKey = process.env.WAHA_API_KEY || "";
+  const wahaWebhookSecret = process.env.WAHA_WEBHOOK_SECRET || "";
+  const webhookUrl = `${(process.env.SUPABASE_URL || "").replace(/\/+$/, "")}/functions/v1/waha-webhook`;
+
+  function isWebhookConfigured(config, targetUrl, secret) {
+    if (!config || !Array.isArray(config.webhooks) || config.webhooks.length === 0) return false;
+    return config.webhooks.some((w) => {
+      return w.url === targetUrl && Array.isArray(w.events) && w.events.includes("message") && w.hmac?.key === secret;
+    });
+  }
 
   if (action === "START") {
+    if (!wahaWebhookSecret || !wahaWebhookSecret.trim()) {
+      return {
+        status: 500,
+        headers: corsHeaders,
+        body: { success: false, message: "Server configuration error: WAHA_WEBHOOK_SECRET is not configured" },
+      };
+    }
+
     let wahaSessionStatus = "STOPPED";
     let meId = null;
 
@@ -73,12 +91,31 @@ async function handleWahaSessionRequest(req, mocks = {}) {
         await mocks.wahaFetch(`${wahaBaseUrl}/api/sessions`, {
           method: "POST",
           headers: { "X-Api-Key": wahaApiKey },
-          body: JSON.stringify({ name: sessionName }),
+          body: JSON.stringify({
+            name: sessionName,
+            start: false,
+            config: {
+              webhooks: [{ url: webhookUrl, events: ["message"], hmac: { key: wahaWebhookSecret } }],
+            },
+          }),
         });
       } else if (getRes.ok) {
         const sessionData = await getRes.json();
         wahaSessionStatus = sessionData?.status || "STOPPED";
         meId = sessionData?.me?.id || sessionData?.me || null;
+
+        if (!isWebhookConfigured(sessionData?.config, webhookUrl, wahaWebhookSecret)) {
+          await mocks.wahaFetch(`${wahaBaseUrl}/api/sessions/${sessionName}`, {
+            method: "PUT",
+            headers: { "X-Api-Key": wahaApiKey },
+            body: JSON.stringify({
+              name: sessionName,
+              config: {
+                webhooks: [{ url: webhookUrl, events: ["message"], hmac: { key: wahaWebhookSecret } }],
+              },
+            }),
+          });
+        }
       }
     } catch (err) {
       if (mocks.logSpy) mocks.logSpy("LOG:", err.message);
@@ -112,6 +149,7 @@ async function handleWahaSessionRequest(req, mocks = {}) {
           status: "CONNECTED",
           session_name: sessionName,
           connected_phone: cleanPhone,
+          qr: null,
         },
       };
     }
@@ -664,5 +702,192 @@ describe("Comprehensive Edge Function waha-session Unit Tests (15 Test Cases)", 
     assert.equal(res.status, 502);
     assert.equal(res.body.success, false);
     assert.equal(res.body.message, "فشل طلب كود الربط من خادم واتساب");
+  });
+
+  test("20. existing session + config {} => PUT webhook config", async () => {
+    let putCalled = false;
+    let putPayload = null;
+
+    const res = await handleWahaSessionRequest(
+      {
+        headers: { authorization: "Bearer teacher-a-jwt" },
+        method: "POST",
+        body: { action: "START" },
+      },
+      {
+        getUser: mockGetUser,
+        wahaFetch: async (url, options) => {
+          if (url.includes(`/api/sessions/teacher_${teacherA.id}`) && (!options || options.method === "GET")) {
+            return {
+              ok: true,
+              status: 200,
+              json: async () => ({
+                status: "WORKING",
+                config: {}, // Empty config
+                me: { id: "201012345678@c.us" },
+              }),
+            };
+          }
+          if (url.includes(`/api/sessions/teacher_${teacherA.id}`) && options?.method === "PUT") {
+            putCalled = true;
+            putPayload = JSON.parse(options.body);
+            return { ok: true, status: 200 };
+          }
+          return { ok: true };
+        },
+      }
+    );
+
+    assert.equal(res.status, 200);
+    assert.equal(res.body.success, true);
+    assert.equal(putCalled, true);
+    assert.ok(Array.isArray(putPayload?.config?.webhooks));
+    assert.equal(putPayload.config.webhooks[0].events[0], "message");
+    assert.equal(putPayload.config.webhooks[0].hmac.key, process.env.WAHA_WEBHOOK_SECRET);
+  });
+
+  test("21. existing WORKING session + correct webhook => no unnecessary PUT", async () => {
+    let putCalled = false;
+    const correctWebhookUrl = `${process.env.SUPABASE_URL}/functions/v1/waha-webhook`;
+
+    const res = await handleWahaSessionRequest(
+      {
+        headers: { authorization: "Bearer teacher-a-jwt" },
+        method: "POST",
+        body: { action: "START" },
+      },
+      {
+        getUser: mockGetUser,
+        wahaFetch: async (url, options) => {
+          if (url.includes(`/api/sessions/teacher_${teacherA.id}`) && (!options || options.method === "GET")) {
+            return {
+              ok: true,
+              status: 200,
+              json: async () => ({
+                status: "WORKING",
+                config: {
+                  webhooks: [
+                    {
+                      url: correctWebhookUrl,
+                      events: ["message"],
+                      hmac: { key: process.env.WAHA_WEBHOOK_SECRET },
+                    },
+                  ],
+                },
+                me: { id: "201012345678@c.us" },
+              }),
+            };
+          }
+          if (options?.method === "PUT") {
+            putCalled = true;
+            return { ok: true, status: 200 };
+          }
+          return { ok: true };
+        },
+      }
+    );
+
+    assert.equal(res.status, 200);
+    assert.equal(res.body.success, true);
+    assert.equal(putCalled, false); // No unnecessary PUT!
+  });
+
+  test("22. missing WAHA_WEBHOOK_SECRET => fail safely", async () => {
+    const originalSecret = process.env.WAHA_WEBHOOK_SECRET;
+    delete process.env.WAHA_WEBHOOK_SECRET;
+
+    try {
+      const res = await handleWahaSessionRequest(
+        {
+          headers: { authorization: "Bearer teacher-a-jwt" },
+          method: "POST",
+          body: { action: "START" },
+        },
+        { getUser: mockGetUser }
+      );
+
+      assert.equal(res.status, 500);
+      assert.equal(res.body.success, false);
+      assert.match(res.body.message, /WAHA_WEBHOOK_SECRET is not configured/);
+    } finally {
+      process.env.WAHA_WEBHOOK_SECRET = originalSecret;
+    }
+  });
+
+  test("23. new session => created with webhook config", async () => {
+    let postPayload = null;
+
+    const res = await handleWahaSessionRequest(
+      {
+        headers: { authorization: "Bearer teacher-a-jwt" },
+        method: "POST",
+        body: { action: "START" },
+      },
+      {
+        getUser: mockGetUser,
+        wahaFetch: async (url, options) => {
+          if (url.includes(`/api/sessions/teacher_${teacherA.id}`)) {
+            return { ok: false, status: 404 };
+          }
+          if (url.endsWith("/api/sessions") && options?.method === "POST") {
+            postPayload = JSON.parse(options.body);
+            return { ok: true, status: 201 };
+          }
+          return { ok: true };
+        },
+      }
+    );
+
+    assert.equal(res.status, 200);
+    assert.ok(postPayload);
+    assert.equal(postPayload.name, `teacher_${teacherA.id}`);
+    assert.equal(postPayload.start, false);
+    assert.ok(Array.isArray(postPayload.config?.webhooks));
+    assert.equal(postPayload.config.webhooks[0].events[0], "message");
+    assert.equal(postPayload.config.webhooks[0].hmac.key, process.env.WAHA_WEBHOOK_SECRET);
+  });
+
+  test("24. preserve existing connected WhatsApp session", async () => {
+    let logoutCalled = false;
+    let deleteCalled = false;
+    let startCalled = false;
+
+    const res = await handleWahaSessionRequest(
+      {
+        headers: { authorization: "Bearer teacher-a-jwt" },
+        method: "POST",
+        body: { action: "START" },
+      },
+      {
+        getUser: mockGetUser,
+        wahaFetch: async (url, options) => {
+          if (url.includes("/logout")) logoutCalled = true;
+          if (options?.method === "DELETE") deleteCalled = true;
+          if (url.includes("/start")) startCalled = true;
+
+          if (url.includes(`/api/sessions/teacher_${teacherA.id}`) && (!options || options.method === "GET")) {
+            return {
+              ok: true,
+              status: 200,
+              json: async () => ({
+                status: "WORKING",
+                config: {}, // triggers PUT reconciliation
+                me: { id: "201012345678@c.us" },
+              }),
+            };
+          }
+          return { ok: true, status: 200 };
+        },
+      }
+    );
+
+    assert.equal(res.status, 200);
+    assert.equal(res.body.success, true);
+    assert.equal(res.body.status, "CONNECTED");
+    assert.equal(res.body.connected_phone, "201012345678");
+    assert.equal(res.body.qr, null);
+    assert.equal(logoutCalled, false);
+    assert.equal(deleteCalled, false);
+    assert.equal(startCalled, false);
   });
 });

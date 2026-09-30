@@ -85,6 +85,104 @@ export function constructNotificationMessage(
   }
 }
 
+export interface ResolveRecipientResult {
+  chatId: string | null;
+  error?: string;
+  lid?: string | null;
+  pn?: string | null;
+}
+
+export async function resolveWahaRecipient(
+  wahaBaseUrl: string,
+  wahaApiKey: string,
+  sessionName: string,
+  rawPhone: string
+): Promise<ResolveRecipientResult> {
+  const formattedPhone = formatParentPhone(rawPhone);
+  if (!formattedPhone || formattedPhone.length < 8) {
+    return { chatId: null, error: `Invalid parent phone number: "${rawPhone}"` };
+  }
+
+  const sessionEncoded = encodeURIComponent(sessionName);
+  const phoneEncoded = encodeURIComponent(formattedPhone);
+  const headers: Record<string, string> = {
+    Accept: "application/json",
+  };
+  if (wahaApiKey) {
+    headers["X-Api-Key"] = wahaApiKey;
+  }
+
+  // 1. Primary Check: Official WAHA LID lookup endpoint GET /api/{session}/lids/pn/{phone}
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 6000);
+    const lidRes = await fetch(
+      `${wahaBaseUrl}/api/${sessionEncoded}/lids/pn/${phoneEncoded}`,
+      {
+        method: "GET",
+        headers,
+        signal: controller.signal,
+      }
+    );
+    clearTimeout(timer);
+
+    if (lidRes.ok) {
+      const lidData = await lidRes.json();
+      if (lidData && typeof lidData.lid === "string" && lidData.lid.trim().length > 0) {
+        return {
+          chatId: lidData.lid.trim(),
+          lid: lidData.lid.trim(),
+          pn: lidData.pn || `${formattedPhone}@c.us`,
+        };
+      }
+    }
+  } catch (_err) {
+    // Continue to check-exists fallback
+  }
+
+  // 2. Secondary Check: WAHA check-exists endpoint GET /api/contacts/check-exists?phone={phone}&session={session}
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 6000);
+    const checkRes = await fetch(
+      `${wahaBaseUrl}/api/contacts/check-exists?phone=${phoneEncoded}&session=${sessionEncoded}`,
+      {
+        method: "GET",
+        headers,
+        signal: controller.signal,
+      }
+    );
+    clearTimeout(timer);
+
+    if (checkRes.ok) {
+      const checkData = await checkRes.json();
+      if (checkData && checkData.numberExists) {
+        let extractedId: string | null = null;
+        if (typeof checkData.id === "string" && checkData.id.trim().length > 0) {
+          extractedId = checkData.id.trim();
+        } else if (checkData.id && typeof checkData.id === "object") {
+          if (typeof checkData.id._serialized === "string" && checkData.id._serialized.trim().length > 0) {
+            extractedId = checkData.id._serialized.trim();
+          }
+        }
+        if (extractedId && (extractedId.endsWith("@lid") || extractedId.endsWith("@c.us"))) {
+          return { chatId: extractedId };
+        }
+      }
+    }
+  } catch (_err) {
+    // Ignore error
+  }
+
+  // 3. Explicit Failure Handling when LID cannot be resolved for WEBJS:
+  // Do NOT blindly send @c.us if LID resolution returned null/failed for WEBJS,
+  // as sending directly to @c.us without a LID causes WAHA 500 "No LID for user".
+  return {
+    chatId: null,
+    error: `WAHA recipient resolution failed: No LID found for phone number ${formattedPhone} in session ${sessionName} (WEBJS).`,
+  };
+}
+
 export async function recordDeliveryAttempt(
   supabase: any,
   params: {
@@ -325,7 +423,60 @@ export async function processNotificationEvent(ctx: ProcessEventContext): Promis
     await recordFailed(`Invalid parent phone number: ${student.parent_phone}`);
     return { success: false, reconciled: false, duplicatePrevented: false, error: "Invalid phone number" };
   }
-  const chatId = `${rawPhone}@c.us`;
+
+  // Resolve recipient chatId:
+  // 1. Primary lookup: Check public.teacher_whatsapp_contacts
+  let chatId: string | null = null;
+  try {
+    const { data: contactData, error: contactError } = await supabase
+      .from("teacher_whatsapp_contacts")
+      .select("chat_id")
+      .eq("teacher_id", teacherId)
+      .eq("phone_e164", rawPhone)
+      .maybeSingle();
+
+    if (contactError) {
+      console.warn(
+        `Notice: teacher_whatsapp_contacts lookup failed for teacher ${teacherId}: ${contactError.message}`
+      );
+    } else if (
+      contactData &&
+      typeof contactData.chat_id === "string" &&
+      contactData.chat_id.trim().length > 0
+    ) {
+      chatId = contactData.chat_id.trim();
+    }
+  } catch (err) {
+    console.warn(
+      `Notice: Exception during teacher_whatsapp_contacts lookup for teacher ${teacherId}:`,
+      err instanceof Error ? err.message : String(err)
+    );
+  }
+
+  // 2. Fallback: Resolve recipient chatId (LID or @c.us) via WAHA APIs if not found in contacts
+  if (!chatId) {
+    const recipientResolution = await resolveWahaRecipient(
+      wahaBaseUrl,
+      wahaApiKey,
+      sessionName,
+      student.parent_phone
+    );
+
+    if (!recipientResolution.chatId) {
+      const resolutionError =
+        recipientResolution.error ||
+        `WAHA recipient resolution failed for ${student.parent_phone}`;
+      await recordFailed(resolutionError);
+      return {
+        success: false,
+        reconciled: false,
+        duplicatePrevented: false,
+        error: resolutionError,
+      };
+    }
+
+    chatId = recipientResolution.chatId;
+  }
 
   // 3. Construct deterministic exact message text BEFORE reconciliation and sendText
   const messageText = constructNotificationMessage(eventType, student.full_name);

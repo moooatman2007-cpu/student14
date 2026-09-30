@@ -204,7 +204,8 @@ class SupabaseGroupRepository(
                 fullName = updatedStudent.fullName,
                 parentPhone = updatedStudent.parentPhone,
                 hasWhatsApp = updatedStudent.hasWhatsApp,
-                alternativePhone = updatedStudent.alternativePhone
+                alternativePhone = updatedStudent.alternativePhone,
+                groupId = updatedStudent.groupId
             )
             val json = Json.encodeToString(updateReq)
             val outbox = OutboxEntity(

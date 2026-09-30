@@ -74,6 +74,50 @@ async function readResponseBody(res: Response): Promise<unknown> {
   }
 }
 
+function extractPhoneFromMePayload(meData: any): string | null {
+  if (!meData) return null;
+  let rawStr = "";
+
+  if (typeof meData === "string") {
+    rawStr = meData;
+  } else if (typeof meData === "object") {
+    if (typeof meData.id === "string") {
+      rawStr = meData.id;
+    } else if (meData.id && typeof meData.id === "object") {
+      rawStr = meData.id._serialized || meData.id.user || meData.id.id || "";
+    } else if (typeof meData.user === "string") {
+      rawStr = meData.user;
+    } else if (typeof meData._serialized === "string") {
+      rawStr = meData._serialized;
+    }
+  }
+
+  if (!rawStr) return null;
+  const digits = rawStr.split("@")[0].replace(/\D/g, "");
+  return digits.length >= 8 ? digits : null;
+}
+
+async function fetchWahaMePhone(
+  wahaBaseUrl: string,
+  sessionName: string,
+  wahaHeaders: Record<string, string>
+): Promise<string | null> {
+  try {
+    const res = await fetchWithTimeout(
+      `${wahaBaseUrl}/api/${encodeURIComponent(sessionName)}/me`,
+      { method: "GET", headers: wahaHeaders },
+      5000
+    );
+    if (res.ok) {
+      const meData = await readResponseBody(res);
+      return extractPhoneFromMePayload(meData);
+    }
+  } catch (_err) {
+    // Ignore error
+  }
+  return null;
+}
+
 Deno.serve(async (req: Request) => {
   // 1. Handle CORS Preflight
   if (req.method === "OPTIONS") {
@@ -180,23 +224,118 @@ Deno.serve(async (req: Request) => {
       wahaHeaders["X-Api-Key"] = wahaApiKey;
     }
 
+    const wahaWebhookSecret = Deno.env.get("WAHA_WEBHOOK_SECRET") || "";
+    const webhookUrl = `${supabaseUrl.replace(/\/+$/, "")}/functions/v1/waha-webhook`;
+
+    function buildSessionConfig(url: string, secret: string) {
+      return {
+        webhooks: [
+          {
+            url,
+            events: ["message"],
+            hmac: {
+              key: secret,
+            },
+          },
+        ],
+      };
+    }
+
+    function isWebhookConfigured(
+      config: any,
+      targetUrl: string,
+      secret: string
+    ): boolean {
+      if (!config || !Array.isArray(config.webhooks) || config.webhooks.length === 0) {
+        return false;
+      }
+      if (!secret || !secret.trim()) {
+        return false;
+      }
+      return config.webhooks.some((w: any) => {
+        const urlMatch =
+          typeof w.url === "string" && w.url.trim() === targetUrl.trim();
+        const eventsMatch =
+          Array.isArray(w.events) && w.events.includes("message");
+        const hmacKey =
+          w.hmac && typeof w.hmac.key === "string" ? w.hmac.key.trim() : "";
+        const hmacMatch = hmacKey === secret.trim();
+        return urlMatch && eventsMatch && hmacMatch;
+      });
+    }
+
+    interface ReconciliationResult {
+      ok: boolean;
+      status: number;
+    }
+
+    async function reconcileSessionConfig(
+      baseUrl: string,
+      targetSession: string,
+      headers: Record<string, string>,
+      url: string,
+      secret: string
+    ): Promise<ReconciliationResult> {
+      try {
+        const putRes = await fetchWithTimeout(
+          `${baseUrl}/api/sessions/${encodeURIComponent(targetSession)}`,
+          {
+            method: "PUT",
+            headers,
+            body: JSON.stringify({
+              name: targetSession,
+              config: buildSessionConfig(url, secret),
+            }),
+          },
+          10000
+        );
+        return {
+          ok: putRes.ok,
+          status: putRes.status,
+        };
+      } catch (err) {
+        console.warn("Failed to reconcile WAHA session config:", err instanceof Error ? err.message : String(err));
+        return {
+          ok: false,
+          status: 0,
+        };
+      }
+    }
+
     // Helper: update teacher_whatsapp_sessions in database
     async function updateDbSession(
       status: string,
       connectedPhone: string | null = null
     ) {
       const now = new Date().toISOString();
+      const payload: Record<string, any> = {
+        teacher_id: teacherId,
+        session_name: sessionName,
+        status: normalizeStatus(status),
+        last_connected_at: isWorkingStatus(status) ? now : null,
+        updated_at: now,
+      };
+      if (connectedPhone !== null || !isWorkingStatus(status)) {
+        payload.connected_phone = connectedPhone;
+      }
       await dbClient.from("teacher_whatsapp_sessions").upsert(
-        {
-          teacher_id: teacherId,
-          session_name: sessionName,
-          status: normalizeStatus(status),
-          connected_phone: connectedPhone,
-          last_connected_at: isWorkingStatus(status) ? now : null,
-          updated_at: now,
-        },
+        payload,
         { onConflict: "teacher_id" }
       );
+    }
+
+    // Helper: get existing connected_phone from DB as fallback
+    async function getDbConnectedPhone(): Promise<string | null> {
+      try {
+        const { data } = await dbClient
+          .from("teacher_whatsapp_sessions")
+          .select("connected_phone")
+          .eq("teacher_id", teacherId)
+          .maybeSingle();
+        return data?.connected_phone || null;
+      } catch {
+        return null;
+      }
     }
 
     // =========================================================================
@@ -229,9 +368,38 @@ Deno.serve(async (req: Request) => {
           const rawStatus = data?.status || "STOPPED";
           sessionStatus = normalizeStatus(rawStatus);
 
-          const meId = data?.me?.id || data?.me;
-          if (typeof meId === "string") {
-            connectedPhone = meId.split("@")[0].replace(/\D/g, "");
+          let webhookConfigured = false;
+          let webhookReconciliationFailed = false;
+
+          // Webhook reconciliation
+          if (wahaWebhookSecret) {
+            webhookConfigured = isWebhookConfigured(
+              data?.config,
+              webhookUrl,
+              wahaWebhookSecret
+            );
+            if (!webhookConfigured) {
+              const recResult = await reconcileSessionConfig(
+                wahaBaseUrl,
+                sessionName,
+                wahaHeaders,
+                webhookUrl,
+                wahaWebhookSecret
+              );
+              if (recResult.ok) {
+                webhookConfigured = true;
+              } else {
+                webhookReconciliationFailed = true;
+              }
+            }
+          }
+
+          connectedPhone = extractPhoneFromMePayload(data?.me);
+          if (!connectedPhone && isWorkingStatus(sessionStatus)) {
+            connectedPhone = await fetchWahaMePhone(wahaBaseUrl, sessionName, wahaHeaders);
+          }
+          if (!connectedPhone && isWorkingStatus(sessionStatus)) {
+            connectedPhone = await getDbConnectedPhone();
           }
 
           // Keep DB in sync with live WAHA status
@@ -267,7 +435,9 @@ Deno.serve(async (req: Request) => {
         message =
           "WAHA server is reachable, but this teacher session does not exist yet.";
       } else if (isConnected) {
-        message = "WAHA session is connected and working.";
+        message = webhookReconciliationFailed
+          ? "WAHA session is connected and working, but webhook reconciliation failed."
+          : "WAHA session is connected and working.";
       } else {
         message = `WAHA session exists with status: ${sessionStatus}.`;
       }
@@ -280,6 +450,8 @@ Deno.serve(async (req: Request) => {
         session_name: sessionName,
         session_status: sessionStatus,
         whatsapp_connected: isConnected,
+        webhook_configured: webhookConfigured,
+        webhook_reconciliation_failed: webhookReconciliationFailed,
         connected_phone: connectedPhone,
         latency_ms: latencyMs,
         message,
@@ -290,6 +462,16 @@ Deno.serve(async (req: Request) => {
     // ACTION: START
     // =========================================================================
     if (action === "START") {
+      if (!wahaWebhookSecret || !wahaWebhookSecret.trim()) {
+        return jsonResponse(
+          {
+            success: false,
+            message: "Server configuration error: WAHA_WEBHOOK_SECRET is not configured",
+          },
+          500
+        );
+      }
+
       let sessionStatus = "STOPPED";
       let connectedPhone: string | null = null;
       let sessionExists = false;
@@ -302,13 +484,17 @@ Deno.serve(async (req: Request) => {
         );
 
         if (getSessionRes.status === 404) {
-          // Session does not exist -> create it
+          // Session does not exist -> create it with webhook config
           const createRes = await fetchWithTimeout(
             `${wahaBaseUrl}/api/sessions`,
             {
               method: "POST",
               headers: wahaHeaders,
-              body: JSON.stringify({ name: sessionName, start: false }),
+              body: JSON.stringify({
+                name: sessionName,
+                start: false,
+                config: buildSessionConfig(webhookUrl, wahaWebhookSecret),
+              }),
             }
           );
 
@@ -331,9 +517,36 @@ Deno.serve(async (req: Request) => {
           sessionExists = true;
           const data: any = await readResponseBody(getSessionRes);
           sessionStatus = normalizeStatus(data?.status);
-          const meId = data?.me?.id || data?.me;
-          if (typeof meId === "string") {
-            connectedPhone = meId.split("@")[0].replace(/\D/g, "");
+
+          // Webhook reconciliation
+          if (!isWebhookConfigured(data?.config, webhookUrl, wahaWebhookSecret)) {
+            const recResult = await reconcileSessionConfig(
+              wahaBaseUrl,
+              sessionName,
+              wahaHeaders,
+              webhookUrl,
+              wahaWebhookSecret
+            );
+            if (!recResult.ok) {
+              return jsonResponse(
+                {
+                  success: false,
+                  reachable: true,
+                  session_exists: true,
+                  status: "FAILED",
+                  message: `Failed to configure required webhooks on WAHA session (status ${recResult.status})`,
+                },
+                502
+              );
+            }
+          }
+
+          connectedPhone = extractPhoneFromMePayload(data?.me);
+          if (!connectedPhone && isWorkingStatus(sessionStatus)) {
+            connectedPhone = await fetchWahaMePhone(wahaBaseUrl, sessionName, wahaHeaders);
+          }
+          if (!connectedPhone && isWorkingStatus(sessionStatus)) {
+            connectedPhone = await getDbConnectedPhone();
           }
         }
       } catch (err) {
@@ -443,6 +656,16 @@ Deno.serve(async (req: Request) => {
     // ACTION: REQUEST_PAIRING_CODE
     // =========================================================================
     if (action === "REQUEST_PAIRING_CODE") {
+      if (!wahaWebhookSecret || !wahaWebhookSecret.trim()) {
+        return jsonResponse(
+          {
+            success: false,
+            message: "Server configuration error: WAHA_WEBHOOK_SECRET is not configured",
+          },
+          500
+        );
+      }
+
       const rawPhone = body.phoneNumber || "";
       const normalizedPhone = normalizeEgyptianPhone(rawPhone);
 
@@ -453,7 +676,7 @@ Deno.serve(async (req: Request) => {
         );
       }
 
-      // Ensure session exists
+      // Ensure session exists with webhook config
       try {
         const getSessionRes = await fetchWithTimeout(
           `${wahaBaseUrl}/api/sessions/${encodeURIComponent(sessionName)}`,
@@ -462,13 +685,55 @@ Deno.serve(async (req: Request) => {
         );
 
         if (getSessionRes.status === 404) {
-          await fetchWithTimeout(`${wahaBaseUrl}/api/sessions`, {
+          const createRes = await fetchWithTimeout(`${wahaBaseUrl}/api/sessions`, {
             method: "POST",
             headers: wahaHeaders,
-            body: JSON.stringify({ name: sessionName, start: false }),
+            body: JSON.stringify({
+              name: sessionName,
+              start: false,
+              config: buildSessionConfig(webhookUrl, wahaWebhookSecret),
+            }),
           });
+          if (!createRes.ok && createRes.status !== 409) {
+            return jsonResponse(
+              {
+                success: false,
+                message: "Could not create WAHA session with webhook configuration",
+              },
+              502
+            );
+          }
+        } else if (getSessionRes.ok) {
+          const sessionData: any = await readResponseBody(getSessionRes);
+          if (!isWebhookConfigured(sessionData?.config, webhookUrl, wahaWebhookSecret)) {
+            const recResult = await reconcileSessionConfig(
+              wahaBaseUrl,
+              sessionName,
+              wahaHeaders,
+              webhookUrl,
+              wahaWebhookSecret
+            );
+            if (!recResult.ok) {
+              return jsonResponse(
+                {
+                  success: false,
+                  message: `Failed to configure required webhooks on WAHA session (status ${recResult.status})`,
+                },
+                502
+              );
+            }
+          }
         }
-      } catch (_) {}
+      } catch (err) {
+        console.warn("Notice checking WAHA session in REQUEST_PAIRING_CODE:", err instanceof Error ? err.message : String(err));
+        return jsonResponse(
+          {
+            success: false,
+            message: "Could not verify or configure WAHA session webhook",
+          },
+          502
+        );
+      }
 
       // Ensure session is started
       try {

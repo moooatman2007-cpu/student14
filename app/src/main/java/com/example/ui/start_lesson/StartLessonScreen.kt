@@ -101,7 +101,7 @@ fun StartLessonScreen(
     }
 
     LaunchedEffect(uiState.isFinished) {
-        if (uiState.isFinished) {
+        if (uiState.isFinished && uiState.currentStep != StartLessonStep.NOTIFICATION_REVIEW) {
             Toast.makeText(context, "تم إنهاء الحصة بنجاح 🎉", Toast.LENGTH_LONG).show()
             onNavigateBack()
         }
@@ -114,15 +114,17 @@ fun StartLessonScreen(
         StartLessonStep.HOMEWORK -> "4. الواجب"
         StartLessonStep.EXAM -> "5. الامتحان"
         StartLessonStep.REVIEW -> "6. مراجعة الحصة"
+        StartLessonStep.NOTIFICATION_REVIEW -> "7. مراجعة الإشعارات"
     }
 
     val stepProgress = when (uiState.currentStep) {
         StartLessonStep.SELECT_GROUP -> 0.15f
         StartLessonStep.ATTENDANCE -> 0.35f
-        StartLessonStep.RECITATION -> 0.55f
-        StartLessonStep.HOMEWORK -> 0.75f
-        StartLessonStep.EXAM -> 0.90f
-        StartLessonStep.REVIEW -> 1.0f
+        StartLessonStep.RECITATION -> 0.50f
+        StartLessonStep.HOMEWORK -> 0.65f
+        StartLessonStep.EXAM -> 0.80f
+        StartLessonStep.REVIEW -> 0.95f
+        StartLessonStep.NOTIFICATION_REVIEW -> 1.0f
     }
 
     Scaffold(
@@ -154,6 +156,7 @@ fun StartLessonScreen(
                                 StartLessonStep.HOMEWORK -> viewModel.goToStep(StartLessonStep.RECITATION)
                                 StartLessonStep.EXAM -> viewModel.goToStep(StartLessonStep.HOMEWORK)
                                 StartLessonStep.REVIEW -> viewModel.goToStep(StartLessonStep.EXAM)
+                                StartLessonStep.NOTIFICATION_REVIEW -> onNavigateBack()
                             }
                         },
                         modifier = Modifier.testTag("start_lesson_back_button")
@@ -189,6 +192,17 @@ fun StartLessonScreen(
                 StartLessonStep.HOMEWORK -> StepHomeworkContent(uiState, viewModel)
                 StartLessonStep.EXAM -> StepExamContent(uiState, viewModel)
                 StartLessonStep.REVIEW -> StepReviewContent(uiState, viewModel)
+                StartLessonStep.NOTIFICATION_REVIEW -> {
+                    val review = uiState.reviewState ?: NotificationReviewState()
+                    NotificationReviewContent(
+                        reviewState = review,
+                        isSubmitting = uiState.isSubmittingNotifications,
+                        creationSummary = uiState.notificationCreationSummary,
+                        onConfirmAndProceed = {
+                            viewModel.submitNotificationEvents(onComplete = onNavigateBack)
+                        }
+                    )
+                }
             }
         }
     }

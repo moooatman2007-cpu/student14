@@ -66,7 +66,8 @@ data class UpdateStudentRequest(
     @SerialName("full_name") val fullName: String,
     @SerialName("parent_phone") val parentPhone: String,
     @SerialName("has_whatsapp") val hasWhatsApp: Boolean,
-    @SerialName("alternative_phone") val alternativePhone: String? = null
+    @SerialName("alternative_phone") val alternativePhone: String? = null,
+    @SerialName("group_id") val groupId: String? = null
 )
 
 @Serializable

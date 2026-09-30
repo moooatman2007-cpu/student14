@@ -370,6 +370,7 @@ export async function processNotificationEvent(ctx: ProcessEventContext): Promis
         chatId,
         text: messageText,
       }),
+      signal: AbortSignal.timeout(30000),
     });
 
     if (wahaRes.ok) {
