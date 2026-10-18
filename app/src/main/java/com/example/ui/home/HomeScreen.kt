@@ -1,6 +1,7 @@
 package com.example.ui.home
 
 import android.widget.Toast
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -22,21 +23,23 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
-import androidx.compose.material.icons.filled.Assessment
-import androidx.compose.material.icons.filled.Assignment
-import androidx.compose.material.icons.filled.AutoStories
+import androidx.compose.material.icons.filled.AccessTime
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CalendarToday
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.Groups
-import androidx.compose.material.icons.filled.AccessTime
 import androidx.compose.material.icons.filled.LocationOn
-import androidx.compose.material.icons.filled.MenuBook
 import androidx.compose.material.icons.filled.PersonAdd
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
@@ -47,48 +50,34 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import coil.compose.AsyncImage
-import coil.request.ImageRequest
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.example.core.model.Grade
+import coil.compose.AsyncImage
+import coil.request.ImageRequest
 import com.example.core.model.SystemMonitoringAlert
-import com.example.ui.components.GradeCard
 import com.example.ui.components.SyncStatusIndicator
 import com.example.ui.monitoring.SystemMonitoringViewModel
-import com.example.ui.theme.ActionAddBg
-import com.example.ui.theme.ActionAddIcon
-import com.example.ui.theme.ActionAttendanceBg
-import com.example.ui.theme.ActionAttendanceIcon
-import com.example.ui.theme.ActionSearchBg
-import com.example.ui.theme.ActionSearchIcon
-import com.example.ui.theme.ActionStudentsBg
-import com.example.ui.theme.ActionStudentsIcon
+import com.example.ui.theme.DangerRed
 import com.example.ui.theme.DarkNavyCard
 import com.example.ui.theme.Dimens
 import com.example.ui.theme.ElectricBlue
 import com.example.ui.theme.EmeraldGreen
 import com.example.ui.theme.EmeraldGreenLight
+import com.example.ui.theme.MidarBlue
 import com.example.ui.theme.PrimaryIndigo
 import com.example.ui.theme.PrimaryIndigoLight
 import com.example.ui.theme.VioletPurple
 import com.example.ui.theme.WarmAmber
-
-import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.layout.fillMaxHeight
-import androidx.compose.foundation.layout.widthIn
-import androidx.compose.material3.LinearProgressIndicator
-import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.draw.shadow
-import com.example.ui.theme.DangerRed
 
 @Composable
 fun HomeScreen(
@@ -123,9 +112,11 @@ fun HomeScreen(
                 bottom = Dimens.Spacing32,
                 top = Dimens.Spacing16
             ),
-            verticalArrangement = Arrangement.spacedBy(Dimens.Spacing20)
+            verticalArrangement = Arrangement.spacedBy(Dimens.Spacing16)
         ) {
-            // 1. Greeting Header Section
+            // ==========================================
+            // 1. HEADER (المدرس + المرحلة + التاريخ)
+            // ==========================================
             item {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
@@ -133,13 +124,16 @@ fun HomeScreen(
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = if (uiState.teacherName.isNotBlank()) "صباح الخير، ${uiState.teacherName} 👋" else "أهلاً بك 👋",
-                            style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.ExtraBold),
-                            color = MaterialTheme.colorScheme.onSurface
+                            text = if (uiState.teacherName.isNotBlank()) "أهلاً بك، أستاذ ${uiState.teacherName} 👋" else "أهلاً بك يا أستاذ 👋",
+                            style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.ExtraBold),
+                            color = MaterialTheme.colorScheme.onSurface,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
+                        Spacer(modifier = Modifier.height(2.dp))
                         Text(
                             text = uiState.currentDate,
-                            style = MaterialTheme.typography.bodyMedium,
+                            style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
@@ -147,7 +141,7 @@ fun HomeScreen(
                     Box(
                         contentAlignment = Alignment.Center,
                         modifier = Modifier
-                            .size(52.dp)
+                            .size(48.dp)
                             .clip(CircleShape)
                             .background(PrimaryIndigoLight)
                             .border(1.dp, PrimaryIndigo.copy(alpha = 0.2f), CircleShape)
@@ -158,7 +152,7 @@ fun HomeScreen(
                                     .data(uiState.avatarUrl)
                                     .crossfade(true)
                                     .build(),
-                                contentDescription = null,
+                                contentDescription = "صورة المعلم",
                                 contentScale = ContentScale.Crop,
                                 modifier = Modifier.fillMaxSize()
                             )
@@ -167,7 +161,7 @@ fun HomeScreen(
                                 imageVector = Icons.Default.Groups,
                                 contentDescription = null,
                                 tint = PrimaryIndigo,
-                                modifier = Modifier.size(28.dp)
+                                modifier = Modifier.size(24.dp)
                             )
                         }
                     }
@@ -181,261 +175,259 @@ fun HomeScreen(
                 }
             }
 
-            // 2. Quick Actions
-            item {
-                Column(verticalArrangement = Arrangement.spacedBy(Dimens.Spacing12)) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(Dimens.Spacing12)
-                    ) {
-                        QuickActionCard(
-                            title = "ابدأ الحصة",
-                            icon = Icons.Default.PlayArrow,
-                            color = EmeraldGreen,
-                            onClick = { onNavigateToStartLesson() },
-                            modifier = Modifier.weight(1f)
-                        )
-                        QuickActionCard(
-                            title = "حضور سريع",
-                            icon = Icons.Default.CalendarToday,
-                            color = PrimaryIndigo,
-                            onClick = { onNavigateToFastAttendance(null, null) },
-                            modifier = Modifier.weight(1f)
-                        )
-                    }
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(Dimens.Spacing12)
-                    ) {
-                        QuickActionCard(
-                            title = "إضافة طالب",
-                            icon = Icons.Default.PersonAdd,
-                            color = ElectricBlue,
-                            onClick = { onNavigateToAddStudent(null) },
-                            modifier = Modifier.weight(1f)
-                        )
-                        QuickActionCard(
-                            title = "التقارير",
-                            icon = Icons.Default.Assessment,
-                            color = VioletPurple,
-                            onClick = { onNavigateToReports() },
-                            modifier = Modifier.weight(1f)
-                        )
-                    }
-                }
-            }
-
-            // 3. Students Overview Card
+            // ==========================================
+            // 2. DAILY SNAPSHOT CARD (ملخص اليوم السريع)
+            // ==========================================
             item {
                 Card(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clickable { onNavigateToStudents(null) }
-                        .testTag("students_overview_card"),
+                        .testTag("home_daily_snapshot_card"),
                     shape = RoundedCornerShape(20.dp),
-                    colors = CardDefaults.cardColors(containerColor = DarkNavyCard),
-                    elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
-                ) {
-                    Box(modifier = Modifier.fillMaxWidth()) {
-                        // Subtle, ultra-faint brand watermark in end corner far from text
-                        com.example.ui.components.MidarWatermarkBackground(
-                            modifier = Modifier
-                                .align(Alignment.BottomEnd)
-                                .padding(end = 12.dp, bottom = 6.dp),
-                            alpha = 0.03f,
-                            size = 75.dp
-                        )
-
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 20.dp, vertical = 18.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Column(
-                                verticalArrangement = Arrangement.spacedBy(2.dp)
-                            ) {
-                                Text(
-                                    text = "👥 الطلاب",
-                                    style = MaterialTheme.typography.titleMedium.copy(
-                                        fontWeight = FontWeight.Bold
-                                    ),
-                                    color = Color.White.copy(alpha = 0.9f)
-                                )
-                                Spacer(modifier = Modifier.height(2.dp))
-                                Text(
-                                    text = "${uiState.stats.totalStudents}",
-                                    style = MaterialTheme.typography.displayMedium.copy(
-                                        fontWeight = FontWeight.Black,
-                                        fontSize = 42.sp
-                                    ),
-                                    color = Color.White
-                                )
-                                Text(
-                                    text = "إجمالي الطلاب المسجلين",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = Color.White.copy(alpha = 0.7f)
-                                )
-                            }
-
-                            Box(
-                                contentAlignment = Alignment.Center,
-                                modifier = Modifier
-                                    .size(40.dp)
-                                    .clip(CircleShape)
-                                    .background(Color.White.copy(alpha = 0.12f))
-                            ) {
-                                Icon(
-                                    imageVector = Icons.AutoMirrored.Filled.ArrowForward,
-                                    contentDescription = "عرض الطلاب",
-                                    tint = Color.White,
-                                    modifier = Modifier.size(20.dp)
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-
-            // 4. Today's Attendance Card
-            item {
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(24.dp),
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                    elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+                    elevation = CardDefaults.cardElevation(defaultElevation = 1.5.dp),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
                 ) {
-                    Column(modifier = Modifier.padding(20.dp)) {
+                    Column(modifier = Modifier.padding(16.dp)) {
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
-                                text = "📋 حضور اليوم",
+                                text = "📊 ملخص اليوم",
                                 style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
                                 color = MaterialTheme.colorScheme.onSurface
                             )
-                            
-                            if (uiState.stats.totalStudents > 0 && (uiState.todayPresentCount + uiState.todayAbsentCount) == 0) {
-                                Text(
-                                    text = "لم يسجل بعد",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = DangerRed,
-                                    modifier = Modifier
-                                        .background(DangerRed.copy(alpha = 0.1f), RoundedCornerShape(8.dp))
-                                        .padding(horizontal = 8.dp, vertical = 4.dp)
-                                )
+
+                            Surface(
+                                shape = RoundedCornerShape(12.dp),
+                                color = PrimaryIndigo.copy(alpha = 0.1f),
+                                modifier = Modifier.clickable { onNavigateToStudents(null) }
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
+                                ) {
+                                    Text(
+                                        text = "الطلاب: ${uiState.stats.totalStudents}",
+                                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                                        color = PrimaryIndigo
+                                    )
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Icon(
+                                        imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+                                        contentDescription = null,
+                                        tint = PrimaryIndigo,
+                                        modifier = Modifier.size(12.dp)
+                                    )
+                                }
                             }
                         }
 
-                        Spacer(modifier = Modifier.height(16.dp))
+                        Spacer(modifier = Modifier.height(14.dp))
 
+                        // Three Metrics Row
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceEvenly
                         ) {
-                            AttendanceMetric(label = "حاضر", value = uiState.todayPresentCount, color = EmeraldGreen)
-                            AttendanceMetric(label = "غائب", value = uiState.todayAbsentCount, color = DangerRed)
-                            AttendanceMetric(label = "لم يسجل", value = uiState.todayNotRecordedCount, color = MaterialTheme.colorScheme.outline)
-                        }
-
-                        Spacer(modifier = Modifier.height(20.dp))
-
-                        Column(modifier = Modifier.fillMaxWidth()) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.Bottom
-                            ) {
-                                Text(
-                                    text = "${uiState.todayPresentCount + uiState.todayAbsentCount} من ${uiState.stats.totalStudents}",
-                                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold)
-                                )
-                                Text(
-                                    text = "${uiState.attendancePercentage.toInt()}%",
-                                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Black),
-                                    color = PrimaryIndigo
-                                )
-                            }
-                            Spacer(modifier = Modifier.height(8.dp))
-                            LinearProgressIndicator(
-                                progress = { uiState.attendancePercentage / 100f },
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(10.dp)
-                                    .clip(CircleShape),
-                                color = PrimaryIndigo,
-                                trackColor = MaterialTheme.colorScheme.surfaceVariant,
-                                strokeCap = StrokeCap.Round
+                            AttendanceMetric(
+                                label = "حاضر",
+                                value = uiState.todayPresentCount,
+                                color = EmeraldGreen,
+                                bg = EmeraldGreenLight
+                            )
+                            AttendanceMetric(
+                                label = "غائب",
+                                value = uiState.todayAbsentCount,
+                                color = DangerRed,
+                                bg = DangerRed.copy(alpha = 0.08f)
+                            )
+                            AttendanceMetric(
+                                label = "لم يسجل بعد",
+                                value = uiState.todayNotRecordedCount,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                bg = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
                             )
                         }
 
-                        if (uiState.stats.totalStudents > 0 && (uiState.todayPresentCount + uiState.todayAbsentCount) == 0) {
-                            Spacer(modifier = Modifier.height(16.dp))
-                            Surface(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clickable { onNavigateToStartLesson() },
-                                shape = RoundedCornerShape(12.dp),
-                                color = EmeraldGreen.copy(alpha = 0.1f),
-                                border = BorderStroke(1.dp, EmeraldGreen.copy(alpha = 0.2f))
-                            ) {
+                        if (uiState.stats.totalStudents > 0) {
+                            Spacer(modifier = Modifier.height(14.dp))
+                            Column(modifier = Modifier.fillMaxWidth()) {
                                 Row(
-                                    modifier = Modifier.padding(12.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.Center
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Icon(Icons.Default.PlayArrow, null, tint = EmeraldGreen, modifier = Modifier.size(16.dp))
-                                    Spacer(modifier = Modifier.width(8.dp))
-                                    Text("ابدأ تسجيل الحضور", color = EmeraldGreen, style = MaterialTheme.typography.labelLarge)
+                                    Text(
+                                        text = "نسبة الحضور اليوم",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    Text(
+                                        text = "${uiState.attendancePercentage.toInt()}%",
+                                        style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                                        color = PrimaryIndigo
+                                    )
                                 }
+                                Spacer(modifier = Modifier.height(6.dp))
+                                LinearProgressIndicator(
+                                    progress = { (uiState.attendancePercentage / 100f).coerceIn(0f, 1f) },
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(8.dp)
+                                        .clip(CircleShape),
+                                    color = if (uiState.attendancePercentage >= 75f) EmeraldGreen else PrimaryIndigo,
+                                    trackColor = MaterialTheme.colorScheme.surfaceVariant,
+                                    strokeCap = StrokeCap.Round
+                                )
                             }
                         }
                     }
                 }
             }
 
-            // 4.b Today's Groups Scheduled Section
+            // ==========================================
+            // 3. PRIMARY ACTION (البطل: ابدأ الحصة)
+            // ==========================================
             item {
-                Column(verticalArrangement = Arrangement.spacedBy(Dimens.Spacing12)) {
+                Surface(
+                    onClick = { onNavigateToStartLesson() },
+                    shape = RoundedCornerShape(20.dp),
+                    color = EmeraldGreen,
+                    shadowElevation = 4.dp,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("home_primary_start_lesson_btn")
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 18.dp, horizontal = 20.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Box(
+                                contentAlignment = Alignment.Center,
+                                modifier = Modifier
+                                    .size(46.dp)
+                                    .clip(CircleShape)
+                                    .background(Color.White.copy(alpha = 0.2f))
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.PlayArrow,
+                                    contentDescription = null,
+                                    tint = Color.White,
+                                    modifier = Modifier.size(28.dp)
+                                )
+                            }
+
+                            Spacer(modifier = Modifier.width(14.dp))
+
+                            Column {
+                                Text(
+                                    text = "ابدأ الحصة الآن",
+                                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Black),
+                                    color = Color.White
+                                )
+                                Spacer(modifier = Modifier.height(2.dp))
+                                Text(
+                                    text = "تسجيل الحضور والتسميع والاختبارات",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = Color.White.copy(alpha = 0.85f)
+                                )
+                            }
+                        }
+
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+                            contentDescription = "ابدأ الحصة",
+                            tint = Color.White,
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
+                }
+            }
+
+            // ==========================================
+            // 4. QUICK ACTIONS (الإجراءات السريعة الهامة)
+            // ==========================================
+            item {
+                Column(verticalArrangement = Arrangement.spacedBy(Dimens.Spacing10)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(Dimens.Spacing12)
+                    ) {
+                        // Quick Attendance Button
+                        HomeCleanActionButton(
+                            title = "حضور سريع",
+                            subtitle = "باركود / يدوي",
+                            icon = Icons.Default.CalendarToday,
+                            color = PrimaryIndigo,
+                            bgColor = PrimaryIndigoLight,
+                            onClick = { onNavigateToFastAttendance(null, null) },
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("home_quick_fast_attendance_btn")
+                        )
+
+                        // Add Student Button
+                        HomeCleanActionButton(
+                            title = "إضافة طالب",
+                            subtitle = "تسجيل جديد",
+                            icon = Icons.Default.PersonAdd,
+                            color = ElectricBlue,
+                            bgColor = ElectricBlue.copy(alpha = 0.08f),
+                            onClick = { onNavigateToAddStudent(null) },
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("home_quick_add_student_btn")
+                        )
+                    }
+
+                    // Manage Groups Button
+                    HomeCleanActionButton(
+                        title = "إدارة المجموعات",
+                        subtitle = "تنظيم الفصول ومواعيد الحضور",
+                        icon = Icons.Default.Groups,
+                        color = VioletPurple,
+                        bgColor = VioletPurple.copy(alpha = 0.1f),
+                        onClick = onNavigateToGroups,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("home_quick_groups_btn")
+                    )
+                }
+            }
+
+            // ==========================================
+            // 5. TODAY'S GROUPS (مجموعات اليوم الحقيقية)
+            // ==========================================
+            item {
+                Column(verticalArrangement = Arrangement.spacedBy(Dimens.Spacing10)) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = if (uiState.todayGroups.isNotEmpty()) "📅 مجموعات اليوم" else "📅 المجموعات الدراسية",
+                            text = "📅 مجموعات اليوم المجدولة",
                             style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
                             color = MaterialTheme.colorScheme.onSurface
                         )
-                        Surface(
-                            shape = RoundedCornerShape(8.dp),
-                            color = PrimaryIndigoLight,
+                        Text(
+                            text = "إدارة المجموعات",
+                            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                            color = PrimaryIndigo,
                             modifier = Modifier
-                                .clip(RoundedCornerShape(8.dp))
                                 .clickable { onNavigateToGroups() }
                                 .testTag("home_view_all_groups_btn")
-                        ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                            ) {
-                                Text(
-                                    text = "إدارة المجموعات",
-                                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
-                                    color = PrimaryIndigo
-                                )
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Icon(
-                                    imageVector = Icons.Default.Groups,
-                                    contentDescription = null,
-                                    tint = PrimaryIndigo,
-                                    modifier = Modifier.size(14.dp)
-                                )
-                            }
-                        }
+                        )
                     }
 
                     if (uiState.todayGroups.isNotEmpty()) {
@@ -447,61 +439,148 @@ fun HomeScreen(
                                     .testTag("today_group_card_${tg.id}"),
                                 shape = RoundedCornerShape(16.dp),
                                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)),
+                                elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
                             ) {
                                 Row(
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .padding(16.dp),
+                                        .padding(14.dp),
                                     horizontalArrangement = Arrangement.SpaceBetween,
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Column(modifier = Modifier.weight(1f)) {
                                         Text(
                                             text = tg.name,
-                                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                                            style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
                                             color = MaterialTheme.colorScheme.onSurface
                                         )
-                                        Text(
-                                            text = tg.gradeName,
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                        Spacer(modifier = Modifier.height(6.dp))
-                                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                                Icon(Icons.Default.AccessTime, null, tint = PrimaryIndigo, modifier = Modifier.size(14.dp))
-                                                Spacer(modifier = Modifier.width(4.dp))
-                                                Text("${tg.startTime} - ${tg.endTime}", style = MaterialTheme.typography.bodySmall)
+                                        if (tg.gradeName.isNotBlank()) {
+                                            Text(
+                                                text = tg.gradeName,
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                        Spacer(modifier = Modifier.height(4.dp))
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                        ) {
+                                            if (tg.startTime.isNotBlank() && tg.endTime.isNotBlank()) {
+                                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                                    Icon(Icons.Default.AccessTime, null, tint = PrimaryIndigo, modifier = Modifier.size(13.dp))
+                                                    Spacer(modifier = Modifier.width(3.dp))
+                                                    Text("${tg.startTime} - ${tg.endTime}", style = MaterialTheme.typography.labelSmall)
+                                                }
                                             }
                                             if (!tg.location.isNullOrBlank()) {
                                                 Row(verticalAlignment = Alignment.CenterVertically) {
-                                                    Icon(Icons.Default.LocationOn, null, tint = WarmAmber, modifier = Modifier.size(14.dp))
-                                                    Spacer(modifier = Modifier.width(4.dp))
-                                                    Text(tg.location, style = MaterialTheme.typography.bodySmall)
+                                                    Icon(Icons.Default.LocationOn, null, tint = WarmAmber, modifier = Modifier.size(13.dp))
+                                                    Spacer(modifier = Modifier.width(3.dp))
+                                                    Text(tg.location, style = MaterialTheme.typography.labelSmall)
                                                 }
                                             }
                                         }
                                     }
 
-                                    Column(horizontalAlignment = Alignment.End) {
-                                        Surface(
-                                            shape = RoundedCornerShape(8.dp),
-                                            color = PrimaryIndigoLight
+                                    Surface(
+                                        shape = RoundedCornerShape(10.dp),
+                                        color = EmeraldGreenLight,
+                                        modifier = Modifier.clickable { onNavigateToFastAttendance(null, tg.id) }
+                                    ) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
                                         ) {
                                             Text(
                                                 text = "${tg.studentCount} طالب",
                                                 style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
-                                                color = PrimaryIndigo,
-                                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                                color = EmeraldGreen
+                                            )
+                                            Spacer(modifier = Modifier.width(4.dp))
+                                            Icon(
+                                                imageVector = Icons.Default.PlayArrow,
+                                                contentDescription = "تحضير",
+                                                tint = EmeraldGreen,
+                                                modifier = Modifier.size(14.dp)
                                             )
                                         }
-                                        Spacer(modifier = Modifier.height(4.dp))
-                                        Row(verticalAlignment = Alignment.CenterVertically) {
-                                            Text("تسجيل", style = MaterialTheme.typography.bodySmall, color = EmeraldGreen, fontWeight = FontWeight.Bold)
-                                            Icon(Icons.Default.PlayArrow, null, tint = EmeraldGreen, modifier = Modifier.size(14.dp))
-                                        }
                                     }
+                                }
+                            }
+                        }
+                    } else {
+                        // Empty State for Groups
+                        Card(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("home_groups_empty_card"),
+                            shape = RoundedCornerShape(16.dp),
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)),
+                            elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+                        ) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 20.dp, horizontal = 16.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally
+                            ) {
+                                Box(
+                                    contentAlignment = Alignment.Center,
+                                    modifier = Modifier
+                                        .size(48.dp)
+                                        .clip(CircleShape)
+                                        .background(PrimaryIndigo.copy(alpha = 0.1f))
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Groups,
+                                        contentDescription = null,
+                                        tint = PrimaryIndigo,
+                                        modifier = Modifier.size(24.dp)
+                                    )
+                                }
+
+                                Spacer(modifier = Modifier.height(10.dp))
+
+                                Text(
+                                    text = "لم تُضف أي مجموعات بعد",
+                                    style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    textAlign = TextAlign.Center
+                                )
+
+                                Spacer(modifier = Modifier.height(4.dp))
+
+                                Text(
+                                    text = "أنشئ مجموعاتك الدراسية الآن لتنظيم مواعيد الحضور وتوزيع الطلاب بسهولة.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    textAlign = TextAlign.Center
+                                )
+
+                                Spacer(modifier = Modifier.height(14.dp))
+
+                                Button(
+                                    onClick = { onNavigateToGroups() },
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = PrimaryIndigo,
+                                        contentColor = Color.White
+                                    ),
+                                    shape = RoundedCornerShape(12.dp),
+                                    modifier = Modifier.testTag("home_empty_add_group_btn")
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Add,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = "+ إضافة مجموعة",
+                                        style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold)
+                                    )
                                 }
                             }
                         }
@@ -509,27 +588,33 @@ fun HomeScreen(
                 }
             }
 
-            // 5. Needs Follow-up (Feature 4 integration)
-            item {
-                FollowUpSection(
-                    followUpStudents = uiState.followUpStudents,
-                    onStudentClick = onNavigateToStudentDetail,
-                    onViewAllClick = { onNavigateToStudents(null) }
-                )
+            // ==========================================
+            // 6. FOLLOW-UP STUDENTS SECTION (الطلاب المتابعة)
+            // ==========================================
+            if (uiState.followUpStudents.isNotEmpty()) {
+                item {
+                    FollowUpSection(
+                        followUpStudents = uiState.followUpStudents,
+                        onStudentClick = onNavigateToStudentDetail,
+                        onViewAllClick = { onNavigateToStudents(null) }
+                    )
+                }
             }
 
-            // 6. Sync Status (Small and clear)
+            // ==========================================
+            // 7. COMPACT SYNC STATUS
+            // ==========================================
             item {
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(16.dp),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)),
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f)),
+                    modifier = Modifier.fillMaxWidth()
                 ) {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 12.dp),
+                            .padding(horizontal = 14.dp, vertical = 8.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
@@ -537,9 +622,9 @@ fun HomeScreen(
                             syncStatus = uiState.syncStatus,
                             onRetry = { viewModel.retrySync() }
                         )
-                        
+
                         Text(
-                            text = "v1.0.5",
+                            text = "مدار • v1.0.6",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.outline
                         )
@@ -551,51 +636,91 @@ fun HomeScreen(
 }
 
 @Composable
-fun QuickActionCard(
+fun HomeCleanActionButton(
     title: String,
+    subtitle: String,
     icon: ImageVector,
     color: Color,
+    bgColor: Color,
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     Card(
         modifier = modifier
-            .height(100.dp)
+            .clip(RoundedCornerShape(16.dp))
             .clickable(onClick = onClick),
-        shape = RoundedCornerShape(20.dp),
+        shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f))
     ) {
-        Column(
-            modifier = Modifier.fillMaxSize(),
-            verticalArrangement = Arrangement.Center,
-            horizontalAlignment = Alignment.CenterHorizontally
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(14.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
             Box(
                 contentAlignment = Alignment.Center,
                 modifier = Modifier
                     .size(40.dp)
                     .clip(CircleShape)
-                    .background(color.copy(alpha = 0.1f))
+                    .background(bgColor)
             ) {
-                Icon(imageVector = icon, contentDescription = null, tint = color, modifier = Modifier.size(20.dp))
+                Icon(
+                    imageVector = icon,
+                    contentDescription = null,
+                    tint = color,
+                    modifier = Modifier.size(20.dp)
+                )
             }
-            Spacer(modifier = Modifier.height(8.dp))
-            Text(
-                text = title,
-                style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
-                color = MaterialTheme.colorScheme.onSurface,
-                textAlign = androidx.compose.ui.text.style.TextAlign.Center
-            )
+
+            Spacer(modifier = Modifier.width(10.dp))
+
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Text(
+                    text = subtitle,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
         }
     }
 }
 
 @Composable
-fun AttendanceMetric(label: String, value: Int, color: Color) {
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Text(text = "$value", style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Black), color = color)
-        Text(text = label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+fun AttendanceMetric(
+    label: String,
+    value: Int,
+    color: Color,
+    bg: Color
+) {
+    Surface(
+        shape = RoundedCornerShape(12.dp),
+        color = bg,
+        modifier = Modifier.padding(horizontal = 4.dp)
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Text(
+                text = "$value",
+                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Black),
+                color = color
+            )
+            Spacer(modifier = Modifier.height(2.dp))
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelSmall,
+                color = color.copy(alpha = 0.9f)
+            )
+        }
     }
 }
 
@@ -615,65 +740,39 @@ fun FollowUpSection(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     text = "🎯 يحتاج متابعة",
-                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                    style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
                     color = MaterialTheme.colorScheme.onSurface
                 )
-                if (followUpStudents.isNotEmpty()) {
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Surface(
-                        shape = CircleShape,
-                        color = WarmAmber.copy(alpha = 0.15f)
-                    ) {
-                        Text(
-                            text = "${followUpStudents.size}",
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
-                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
-                            color = WarmAmber
-                        )
-                    }
-                }
-            }
-
-            if (followUpStudents.isNotEmpty()) {
-                Text(
-                    text = "عرض الكل",
-                    style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
-                    color = PrimaryIndigo,
-                    modifier = Modifier.clickable { onViewAllClick() }
-                )
-            }
-        }
-
-        Spacer(modifier = Modifier.height(Dimens.Spacing12))
-
-        if (followUpStudents.isEmpty()) {
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.cardColors(containerColor = EmeraldGreenLight.copy(alpha = 0.5f))
-            ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(16.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.Center
+                Spacer(modifier = Modifier.width(6.dp))
+                Surface(
+                    shape = CircleShape,
+                    color = WarmAmber.copy(alpha = 0.15f)
                 ) {
                     Text(
-                        text = "🎉 ممتاز. لا يوجد طلاب يحتاجون متابعة حاليًا.",
-                        style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
-                        color = EmeraldGreen
+                        text = "${followUpStudents.size}",
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                        color = WarmAmber
                     )
                 }
             }
-        } else {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                followUpStudents.forEach { student ->
-                    FollowUpItem(
-                        student = student,
-                        onClick = { onStudentClick(student.studentId) }
-                    )
-                }
+
+            Text(
+                text = "عرض الكل",
+                style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                color = PrimaryIndigo,
+                modifier = Modifier.clickable { onViewAllClick() }
+            )
+        }
+
+        Spacer(modifier = Modifier.height(8.dp))
+
+        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            followUpStudents.take(3).forEach { student ->
+                FollowUpItem(
+                    student = student,
+                    onClick = { onStudentClick(student.studentId) }
+                )
             }
         }
     }
@@ -690,38 +789,39 @@ fun FollowUpItem(
             .clickable(onClick = onClick),
         shape = RoundedCornerShape(12.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        elevation = CardDefaults.cardElevation(defaultElevation = 0.5.dp)
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.5.dp),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(12.dp),
+                .padding(10.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Box(
                 contentAlignment = Alignment.Center,
                 modifier = Modifier
-                    .size(40.dp)
+                    .size(34.dp)
                     .clip(CircleShape)
                     .background(WarmAmber.copy(alpha = 0.1f))
             ) {
                 Text(
                     text = "⚠️",
-                    fontSize = 18.sp
+                    fontSize = 14.sp
                 )
             }
 
-            Spacer(modifier = Modifier.width(12.dp))
+            Spacer(modifier = Modifier.width(10.dp))
 
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = student.studentName,
-                    style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Bold),
+                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
                     color = MaterialTheme.colorScheme.onSurface
                 )
                 Text(
                     text = student.reason,
-                    style = MaterialTheme.typography.bodySmall,
+                    style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
@@ -729,131 +829,8 @@ fun FollowUpItem(
             Icon(
                 imageVector = Icons.AutoMirrored.Filled.ArrowForward,
                 contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
-                modifier = Modifier.size(16.dp)
-            )
-        }
-    }
-}
-
-@Composable
-fun HomeMetricPillCard(
-    title: String,
-    value: String,
-    subtitle: String,
-    badgeColor: Color,
-    iconTint: Color,
-    icon: ImageVector,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier
-) {
-    Card(
-        modifier = modifier
-            .clip(RoundedCornerShape(16.dp))
-            .clickable(onClick = onClick),
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = Dimens.Spacing10, vertical = Dimens.Spacing12)
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Text(
-                    text = title,
-                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold, fontSize = 11.sp),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f)
-                )
-
-                Box(
-                    contentAlignment = Alignment.Center,
-                    modifier = Modifier
-                        .size(24.dp)
-                        .clip(RoundedCornerShape(6.dp))
-                        .background(badgeColor)
-                ) {
-                    Icon(
-                        imageVector = icon,
-                        contentDescription = null,
-                        tint = iconTint,
-                        modifier = Modifier.size(14.dp)
-                    )
-                }
-            }
-
-            Spacer(modifier = Modifier.height(Dimens.Spacing6))
-
-            Row(verticalAlignment = Alignment.Bottom) {
-                Text(
-                    text = value,
-                    style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
-                    color = iconTint
-                )
-                Spacer(modifier = Modifier.width(4.dp))
-                Text(
-                    text = subtitle,
-                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-        }
-    }
-}
-
-@Composable
-fun HomeActionButton(
-    title: String,
-    icon: ImageVector,
-    badgeBg: Color,
-    iconColor: Color,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier
-) {
-    Card(
-        modifier = modifier
-            .clip(RoundedCornerShape(20.dp))
-            .clickable(onClick = onClick),
-        shape = RoundedCornerShape(20.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(vertical = Dimens.Spacing16, horizontal = Dimens.Spacing12),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center
-        ) {
-            Box(
-                contentAlignment = Alignment.Center,
-                modifier = Modifier
-                    .size(48.dp)
-                    .clip(CircleShape)
-                    .background(badgeBg)
-            ) {
-                Icon(
-                    imageVector = icon,
-                    contentDescription = title,
-                    tint = iconColor,
-                    modifier = Modifier.size(24.dp)
-                )
-            }
-
-            Spacer(modifier = Modifier.height(Dimens.Spacing10))
-
-            Text(
-                text = title,
-                style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
-                color = MaterialTheme.colorScheme.onSurface
+                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
+                modifier = Modifier.size(14.dp)
             )
         }
     }

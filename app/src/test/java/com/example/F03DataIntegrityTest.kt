@@ -93,7 +93,7 @@ class F03DataIntegrityTest {
         )
 
         assertTrue(result.isSuccess)
-        val student = result.getOrNull()
+        val student = result.getOrNull()?.data
         assertNotNull(student)
         val firstId = student!!.studentId
 
@@ -123,7 +123,7 @@ class F03DataIntegrityTest {
         )
 
         assertTrue(result.isSuccess)
-        val recitation = result.getOrNull()
+        val recitation = result.getOrNull()?.data
         assertNotNull(recitation)
 
         val cached = recitationDao.getRecitationByIdSync("teacher_test", recitation!!.recitationId)
@@ -176,7 +176,7 @@ class F03DataIntegrityTest {
         )
 
         assertTrue(result.isSuccess)
-        val exam = result.getOrNull()
+        val exam = result.getOrNull()?.data
         assertNotNull(exam)
 
         // Room check
@@ -265,18 +265,21 @@ class F03DataIntegrityTest {
             parentPhone: String,
             hasWhatsApp: Boolean,
             alternativePhone: String?
-        ): Result<Student> {
+        ): Result<SyncResult<Student>> {
             addStudentCallCount++
             kotlinx.coroutines.delay(1000) // Delay to simulate latency and hold isSaving = true
             return Result.success(
-                Student(
-                    studentId = "s_double",
-                    studentCode = "ST-999",
-                    fullName = fullName,
-                    gradeId = gradeId,
-                    parentPhone = parentPhone,
-                    hasWhatsApp = hasWhatsApp,
-                    teacherId = "teacher_test"
+                SyncResult(
+                    Student(
+                        studentId = "s_double",
+                        studentCode = "ST-999",
+                        fullName = fullName,
+                        gradeId = gradeId,
+                        parentPhone = parentPhone,
+                        hasWhatsApp = hasWhatsApp,
+                        teacherId = "teacher_test"
+                    ),
+                    BatchSyncStatus.SAVED_TO_CLOUD
                 )
             )
         }
@@ -285,7 +288,7 @@ class F03DataIntegrityTest {
         override suspend fun getStudentById(studentId: String): Student? = null
         override suspend fun getStudentByCode(studentCode: String): Student? = null
         override suspend fun updateStudent(student: Student): Result<Student> = Result.success(student)
-        override suspend fun deleteStudent(studentId: String): Result<Unit> = Result.success(Unit)
+        override suspend fun deleteStudent(studentId: String): Result<SyncResult<Unit>> = Result.success(SyncResult(Unit, BatchSyncStatus.SAVED_TO_CLOUD))
         override fun searchStudents(query: String, gradeId: String?): kotlinx.coroutines.flow.Flow<List<Student>> = kotlinx.coroutines.flow.flowOf(emptyList())
         override fun getStats(): kotlinx.coroutines.flow.Flow<TeacherStats> = kotlinx.coroutines.flow.flowOf(TeacherStats())
     }

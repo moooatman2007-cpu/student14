@@ -2,9 +2,11 @@ package com.example.data.repository
 
 import android.util.Log
 
+import com.example.core.model.BatchSyncStatus
 import com.example.core.model.InsertStudentRequest
 import com.example.core.model.SoftDeleteStudentRequest
 import com.example.core.model.Student
+import com.example.core.model.SyncResult
 import com.example.core.model.SupabaseStudentInsertDto
 import com.example.core.model.TeacherStats
 import com.example.core.model.UpdateStudentRequest
@@ -40,16 +42,24 @@ class SupabaseStudentRepository(
 ) : StudentRepository {
     private val client = SupabaseClientProvider.client
     private val _students = MutableStateFlow<List<Student>>(emptyList())
+    private var lastFetchTimeMs = 0L
+    private val CACHE_TTL_MS = 30_000L
 
     fun clearCache() {
+        lastFetchTimeMs = 0L
         _students.value = emptyList()
     }
 
-    suspend fun fetchStudents(): List<Student> = withContext(Dispatchers.IO) {
+    suspend fun fetchStudents(forceRefresh: Boolean = false): List<Student> = withContext(Dispatchers.IO) {
         val teacherId = SupabaseClientProvider.mockTeacherId ?: client.auth.currentUserOrNull()?.id
         if (teacherId == null) {
             _students.value = emptyList()
             return@withContext emptyList()
+        }
+
+        val now = System.currentTimeMillis()
+        if (!forceRefresh && now - lastFetchTimeMs < CACHE_TTL_MS && _students.value.isNotEmpty()) {
+            return@withContext _students.value
         }
 
         try {
@@ -80,6 +90,7 @@ class SupabaseStudentRepository(
                 val localGroupId = localGroupMap[s.studentId] ?: s.groupId
                 s.copy(groupId = localGroupId)
             }
+            lastFetchTimeMs = now
             _students.value = mergedList
             mergedList
         } catch (e: Exception) {
@@ -222,7 +233,7 @@ class SupabaseStudentRepository(
         parentPhone: String,
         hasWhatsApp: Boolean,
         alternativePhone: String?
-    ): Result<Student> = withContext(Dispatchers.IO) {
+    ): Result<SyncResult<Student>> = withContext(Dispatchers.IO) {
         Log.d("SyncDiag", "REPO ADD START: fullName=${fullName}, gradeId=${gradeId}")
         val user = client.auth.currentUserOrNull()
         val teacherId = SupabaseClientProvider.mockTeacherId ?: user?.id
@@ -266,7 +277,7 @@ class SupabaseStudentRepository(
             currentList.add(0, insertedStudent)
             _students.value = currentList
 
-            Result.success(insertedStudent)
+            Result.success(SyncResult(insertedStudent, BatchSyncStatus.SAVED_TO_CLOUD))
         } catch (e: Exception) {
             e.printStackTrace()
             val isLocalFailure = e is android.database.sqlite.SQLiteException || e.stackTrace.any { it.className.contains("sqlite") || it.className.contains("room") }
@@ -308,7 +319,7 @@ class SupabaseStudentRepository(
 
                 
         Log.d("SyncDiag", "REPO ADD SUCCESS: id=${student.studentId}")
-                Result.success(student)
+                Result.success(SyncResult(student, BatchSyncStatus.QUEUED_OFFLINE))
             } catch (ex: Exception) {
                 ex.printStackTrace()
                 Result.failure(Exception(ex.message ?: "حدث خطأ أثناء إضافة الطالب."))
@@ -418,7 +429,7 @@ class SupabaseStudentRepository(
         }
     }
 
-    override suspend fun deleteStudent(studentId: String): Result<Unit> = withContext(Dispatchers.IO) {
+    override suspend fun deleteStudent(studentId: String): Result<SyncResult<Unit>> = withContext(Dispatchers.IO) {
         val user = client.auth.currentUserOrNull()
         val teacherId = SupabaseClientProvider.mockTeacherId ?: user?.id
             ?: return@withContext Result.failure(IllegalStateException("انتهت الجلسة، يرجى تسجيل الدخول أولاً."))
@@ -439,7 +450,7 @@ class SupabaseStudentRepository(
 
             _students.value = _students.value.filterNot { it.studentId == studentId }
 
-            Result.success(Unit)
+            Result.success(SyncResult(Unit, BatchSyncStatus.SAVED_TO_CLOUD))
         } catch (e: Exception) {
             e.printStackTrace()
             // Offline fallback
@@ -465,7 +476,7 @@ class SupabaseStudentRepository(
 
                 _students.value = _students.value.filterNot { it.studentId == studentId }
 
-                Result.success(Unit)
+                Result.success(SyncResult(Unit, BatchSyncStatus.QUEUED_OFFLINE))
             } catch (ex: Exception) {
                 ex.printStackTrace()
                 Result.failure(Exception(ex.message ?: "حدث خطأ أثناء حذف الطالب."))

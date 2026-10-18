@@ -30,7 +30,10 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Groups
+import androidx.compose.material.icons.filled.Notifications
+import androidx.compose.material.icons.filled.PersonOff
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.School
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -110,20 +113,28 @@ fun StartLessonScreen(
     val stepTitle = when (uiState.currentStep) {
         StartLessonStep.SELECT_GROUP -> "1. اختيار المجموعة"
         StartLessonStep.ATTENDANCE -> "2. تسجيل الحضور"
-        StartLessonStep.RECITATION -> "3. التسميع"
-        StartLessonStep.HOMEWORK -> "4. الواجب"
-        StartLessonStep.EXAM -> "5. الامتحان"
-        StartLessonStep.REVIEW -> "6. مراجعة الحصة"
-        StartLessonStep.NOTIFICATION_REVIEW -> "7. مراجعة الإشعارات"
+        StartLessonStep.ATTENDANCE_SUMMARY -> "3. ملخص حضور اليوم"
+        StartLessonStep.RECITATION_CHOICE -> "4. التسميع اليومي؟"
+        StartLessonStep.RECITATION -> "5. تسجيل التسميع"
+        StartLessonStep.HOMEWORK_CHOICE -> "6. الواجب اليومي؟"
+        StartLessonStep.HOMEWORK -> "7. تسجيل الواجب"
+        StartLessonStep.EXAM_CHOICE -> "8. الامتحان اليومي؟"
+        StartLessonStep.EXAM -> "9. تسجيل الامتحان"
+        StartLessonStep.REVIEW -> "10. إنهاء الحصة"
+        StartLessonStep.NOTIFICATION_REVIEW -> "11. مراجعة الإشعارات"
     }
 
     val stepProgress = when (uiState.currentStep) {
-        StartLessonStep.SELECT_GROUP -> 0.15f
-        StartLessonStep.ATTENDANCE -> 0.35f
-        StartLessonStep.RECITATION -> 0.50f
-        StartLessonStep.HOMEWORK -> 0.65f
-        StartLessonStep.EXAM -> 0.80f
-        StartLessonStep.REVIEW -> 0.95f
+        StartLessonStep.SELECT_GROUP -> 0.09f
+        StartLessonStep.ATTENDANCE -> 0.18f
+        StartLessonStep.ATTENDANCE_SUMMARY -> 0.27f
+        StartLessonStep.RECITATION_CHOICE -> 0.36f
+        StartLessonStep.RECITATION -> 0.45f
+        StartLessonStep.HOMEWORK_CHOICE -> 0.54f
+        StartLessonStep.HOMEWORK -> 0.63f
+        StartLessonStep.EXAM_CHOICE -> 0.72f
+        StartLessonStep.EXAM -> 0.81f
+        StartLessonStep.REVIEW -> 0.90f
         StartLessonStep.NOTIFICATION_REVIEW -> 1.0f
     }
 
@@ -152,10 +163,32 @@ fun StartLessonScreen(
                             when (uiState.currentStep) {
                                 StartLessonStep.SELECT_GROUP -> onNavigateBack()
                                 StartLessonStep.ATTENDANCE -> viewModel.goToStep(StartLessonStep.SELECT_GROUP)
-                                StartLessonStep.RECITATION -> viewModel.goToStep(StartLessonStep.ATTENDANCE)
-                                StartLessonStep.HOMEWORK -> viewModel.goToStep(StartLessonStep.RECITATION)
-                                StartLessonStep.EXAM -> viewModel.goToStep(StartLessonStep.HOMEWORK)
-                                StartLessonStep.REVIEW -> viewModel.goToStep(StartLessonStep.EXAM)
+                                StartLessonStep.ATTENDANCE_SUMMARY -> viewModel.goToStep(StartLessonStep.ATTENDANCE)
+                                StartLessonStep.RECITATION_CHOICE -> viewModel.goToStep(StartLessonStep.ATTENDANCE_SUMMARY)
+                                StartLessonStep.RECITATION -> viewModel.goToStep(StartLessonStep.RECITATION_CHOICE)
+                                StartLessonStep.HOMEWORK_CHOICE -> {
+                                    if (uiState.skipRecitation) {
+                                        viewModel.goToStep(StartLessonStep.RECITATION_CHOICE)
+                                    } else {
+                                        viewModel.goToStep(StartLessonStep.RECITATION)
+                                    }
+                                }
+                                StartLessonStep.HOMEWORK -> viewModel.goToStep(StartLessonStep.HOMEWORK_CHOICE)
+                                StartLessonStep.EXAM_CHOICE -> {
+                                    if (uiState.skipHomework) {
+                                        viewModel.goToStep(StartLessonStep.HOMEWORK_CHOICE)
+                                    } else {
+                                        viewModel.goToStep(StartLessonStep.HOMEWORK)
+                                    }
+                                }
+                                StartLessonStep.EXAM -> viewModel.goToStep(StartLessonStep.EXAM_CHOICE)
+                                StartLessonStep.REVIEW -> {
+                                    if (uiState.skipExam) {
+                                        viewModel.goToStep(StartLessonStep.EXAM_CHOICE)
+                                    } else {
+                                        viewModel.goToStep(StartLessonStep.EXAM)
+                                    }
+                                }
                                 StartLessonStep.NOTIFICATION_REVIEW -> onNavigateBack()
                             }
                         },
@@ -188,8 +221,12 @@ fun StartLessonScreen(
             when (uiState.currentStep) {
                 StartLessonStep.SELECT_GROUP -> StepSelectGroupContent(uiState, viewModel)
                 StartLessonStep.ATTENDANCE -> StepAttendanceContent(uiState, viewModel)
+                StartLessonStep.ATTENDANCE_SUMMARY -> StepAttendanceSummaryContent(uiState, viewModel)
+                StartLessonStep.RECITATION_CHOICE -> StepRecitationChoiceContent(uiState, viewModel)
                 StartLessonStep.RECITATION -> StepRecitationContent(uiState, viewModel)
+                StartLessonStep.HOMEWORK_CHOICE -> StepHomeworkChoiceContent(uiState, viewModel)
                 StartLessonStep.HOMEWORK -> StepHomeworkContent(uiState, viewModel)
+                StartLessonStep.EXAM_CHOICE -> StepExamChoiceContent(uiState, viewModel)
                 StartLessonStep.EXAM -> StepExamContent(uiState, viewModel)
                 StartLessonStep.REVIEW -> StepReviewContent(uiState, viewModel)
                 StartLessonStep.NOTIFICATION_REVIEW -> {
@@ -516,14 +553,14 @@ fun StepAttendanceContent(uiState: StartLessonUiState, viewModel: StartLessonVie
         Spacer(modifier = Modifier.height(12.dp))
 
         Button(
-            onClick = { viewModel.goToStep(StartLessonStep.RECITATION) },
+            onClick = { viewModel.goToStep(StartLessonStep.ATTENDANCE_SUMMARY) },
             colors = ButtonDefaults.buttonColors(containerColor = PrimaryIndigo),
             shape = RoundedCornerShape(16.dp),
             modifier = Modifier
                 .fillMaxWidth()
                 .height(52.dp)
         ) {
-            Text("التالي: التسميع", style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold))
+            Text("التالي: ملخص الحضور", style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold))
         }
     }
 }
@@ -545,7 +582,7 @@ fun StepRecitationContent(uiState: StartLessonUiState, viewModel: StartLessonVie
                 style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold)
             )
             OutlinedButton(
-                onClick = { viewModel.goToStep(StartLessonStep.HOMEWORK) },
+                onClick = { viewModel.goToStep(StartLessonStep.HOMEWORK_CHOICE) },
                 shape = RoundedCornerShape(12.dp)
             ) {
                 Icon(imageVector = Icons.Default.SkipNext, contentDescription = null)
@@ -597,14 +634,14 @@ fun StepRecitationContent(uiState: StartLessonUiState, viewModel: StartLessonVie
         Spacer(modifier = Modifier.height(12.dp))
 
         Button(
-            onClick = { viewModel.goToStep(StartLessonStep.HOMEWORK) },
+            onClick = { viewModel.goToStep(StartLessonStep.HOMEWORK_CHOICE) },
             colors = ButtonDefaults.buttonColors(containerColor = PrimaryIndigo),
             shape = RoundedCornerShape(16.dp),
             modifier = Modifier
                 .fillMaxWidth()
                 .height(52.dp)
         ) {
-            Text("التالي: الواجب", style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold))
+            Text("التالي: اختيار الواجب", style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold))
         }
     }
 }
@@ -626,7 +663,7 @@ fun StepHomeworkContent(uiState: StartLessonUiState, viewModel: StartLessonViewM
                 style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold)
             )
             OutlinedButton(
-                onClick = { viewModel.goToStep(StartLessonStep.EXAM) },
+                onClick = { viewModel.goToStep(StartLessonStep.EXAM_CHOICE) },
                 shape = RoundedCornerShape(12.dp)
             ) {
                 Icon(imageVector = Icons.Default.SkipNext, contentDescription = null)
@@ -686,14 +723,14 @@ fun StepHomeworkContent(uiState: StartLessonUiState, viewModel: StartLessonViewM
         Spacer(modifier = Modifier.height(12.dp))
 
         Button(
-            onClick = { viewModel.goToStep(StartLessonStep.EXAM) },
+            onClick = { viewModel.goToStep(StartLessonStep.EXAM_CHOICE) },
             colors = ButtonDefaults.buttonColors(containerColor = PrimaryIndigo),
             shape = RoundedCornerShape(16.dp),
             modifier = Modifier
                 .fillMaxWidth()
                 .height(52.dp)
         ) {
-            Text("التالي: الامتحان", style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold))
+            Text("التالي: اختيار الامتحان", style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold))
         }
     }
 }
@@ -858,6 +895,366 @@ fun StepReviewContent(uiState: StartLessonUiState, viewModel: StartLessonViewMod
                     Text("إنهاء الحصة", style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold))
                 }
             }
+        }
+    }
+}
+
+@Composable
+fun StepAttendanceSummaryContent(uiState: StartLessonUiState, viewModel: StartLessonViewModel) {
+    val total = uiState.studentsInGroup.size
+    val present = uiState.presentStudentIds.size
+    val absent = (total - present).coerceAtLeast(0)
+    val absentStudents = uiState.studentsInGroup.filter { !uiState.presentStudentIds.contains(it.studentId) }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(Dimens.Spacing20),
+        verticalArrangement = Arrangement.spacedBy(Dimens.Spacing16)
+    ) {
+        Text(
+            text = "ملخص حضور الحصة اليوم",
+            style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
+            color = MaterialTheme.colorScheme.onSurface
+        )
+
+        Card(
+            shape = RoundedCornerShape(20.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(Dimens.Spacing16),
+                verticalArrangement = Arrangement.spacedBy(Dimens.Spacing12)
+            ) {
+                Text(
+                    text = "إحصائيات المجموعة الحالية",
+                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                    color = PrimaryIndigo
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text("إجمالي الطلاب: $total", style = MaterialTheme.typography.bodyLarge)
+                    Text("حاضر: $present", color = EmeraldGreen, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodyLarge)
+                    Text("غائب: $absent", color = DangerRed, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodyLarge)
+                }
+            }
+        }
+
+        Text(
+            text = "الطلاب الغائبون (${absentStudents.size}):",
+            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+            color = MaterialTheme.colorScheme.onSurface
+        )
+
+        if (absentStudents.isEmpty()) {
+            Card(
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = EmeraldGreenLight),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(
+                    modifier = Modifier.padding(Dimens.Spacing16),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Icon(imageVector = Icons.Default.CheckCircle, contentDescription = null, tint = EmeraldGreen)
+                    Text("ممتاز! جميع طلاب المجموعة حاضرون اليوم 🎉", fontWeight = FontWeight.Bold, color = EmeraldGreen)
+                }
+            }
+        } else {
+            LazyColumn(
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.weight(1f)
+            ) {
+                items(absentStudents, key = { it.studentId }) { student ->
+                    Card(
+                        shape = RoundedCornerShape(12.dp),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(12.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(10.dp)
+                                        .clip(CircleShape)
+                                        .background(DangerRed)
+                                )
+                                Text(text = student.fullName, style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold))
+                            }
+                            Text(text = "كود: ${student.studentCode}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                }
+            }
+        }
+
+        Card(
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Row(
+                modifier = Modifier.padding(12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Icon(imageVector = Icons.Default.Notifications, contentDescription = null, tint = PrimaryIndigo)
+                Text(
+                    text = "سيتم تجهيز إشعارات الغياب لأولياء أمور الطلاب الغائبين في قائمة الانتظار لمراجعتها فور إنهاء الحصة.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(8.dp))
+
+        Button(
+            onClick = { viewModel.goToStep(StartLessonStep.RECITATION_CHOICE) },
+            colors = ButtonDefaults.buttonColors(containerColor = PrimaryIndigo),
+            shape = RoundedCornerShape(16.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(52.dp)
+        ) {
+            Text("متابعة إلى اختيار التسميع", style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold))
+        }
+    }
+}
+
+@Composable
+fun StepRecitationChoiceContent(uiState: StartLessonUiState, viewModel: StartLessonViewModel) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(Dimens.Spacing24),
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Box(
+            contentAlignment = Alignment.Center,
+            modifier = Modifier
+                .size(100.dp)
+                .clip(CircleShape)
+                .background(PrimaryIndigoLight)
+        ) {
+            Icon(
+                imageVector = Icons.Default.AutoStories,
+                contentDescription = null,
+                tint = PrimaryIndigo,
+                modifier = Modifier.size(56.dp)
+            )
+        }
+
+        Spacer(modifier = Modifier.height(24.dp))
+
+        Text(
+            text = "هل يوجد تسميع اليوم؟",
+            style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold),
+            color = MaterialTheme.colorScheme.onSurface
+        )
+
+        Spacer(modifier = Modifier.height(8.dp))
+
+        Text(
+            text = "يمكنك تسجيل وحفظ درجات الحفظ والتلاوة والملاحظات لكل طالب في هذه الحصة.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+            modifier = Modifier.padding(horizontal = 16.dp)
+        )
+
+        Spacer(modifier = Modifier.height(32.dp))
+
+        Button(
+            onClick = {
+                viewModel.setSkipRecitation(false)
+                viewModel.goToStep(StartLessonStep.RECITATION)
+            },
+            colors = ButtonDefaults.buttonColors(containerColor = PrimaryIndigo),
+            shape = RoundedCornerShape(16.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(52.dp)
+        ) {
+            Text("نعم، تسجيل التسميع", style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold))
+        }
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        OutlinedButton(
+            onClick = {
+                viewModel.setSkipRecitation(true)
+                viewModel.goToStep(StartLessonStep.HOMEWORK_CHOICE)
+            },
+            shape = RoundedCornerShape(16.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(52.dp)
+        ) {
+            Text("تخطي ومتابعة للواجب", style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold))
+        }
+    }
+}
+
+@Composable
+fun StepHomeworkChoiceContent(uiState: StartLessonUiState, viewModel: StartLessonViewModel) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(Dimens.Spacing24),
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Box(
+            contentAlignment = Alignment.Center,
+            modifier = Modifier
+                .size(100.dp)
+                .clip(CircleShape)
+                .background(PrimaryIndigoLight)
+        ) {
+            Icon(
+                imageVector = Icons.Default.Assignment,
+                contentDescription = null,
+                tint = PrimaryIndigo,
+                modifier = Modifier.size(56.dp)
+            )
+        }
+
+        Spacer(modifier = Modifier.height(24.dp))
+
+        Text(
+            text = "هل يوجد واجب اليوم؟",
+            style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold),
+            color = MaterialTheme.colorScheme.onSurface
+        )
+
+        Spacer(modifier = Modifier.height(8.dp))
+
+        Text(
+            text = "حدد حالة تسليم الواجب (مكتمل / غير مكتمل) لتسجيل الالتزام ومتابعته.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+            modifier = Modifier.padding(horizontal = 16.dp)
+        )
+
+        Spacer(modifier = Modifier.height(32.dp))
+
+        Button(
+            onClick = {
+                viewModel.setSkipHomework(false)
+                viewModel.goToStep(StartLessonStep.HOMEWORK)
+            },
+            colors = ButtonDefaults.buttonColors(containerColor = PrimaryIndigo),
+            shape = RoundedCornerShape(16.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(52.dp)
+        ) {
+            Text("نعم، تسجيل الواجب", style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold))
+        }
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        OutlinedButton(
+            onClick = {
+                viewModel.setSkipHomework(true)
+                viewModel.goToStep(StartLessonStep.EXAM_CHOICE)
+            },
+            shape = RoundedCornerShape(16.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(52.dp)
+        ) {
+            Text("تخطي ومتابعة للامتحان", style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold))
+        }
+    }
+}
+
+@Composable
+fun StepExamChoiceContent(uiState: StartLessonUiState, viewModel: StartLessonViewModel) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(Dimens.Spacing24),
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Box(
+            contentAlignment = Alignment.Center,
+            modifier = Modifier
+                .size(100.dp)
+                .clip(CircleShape)
+                .background(PrimaryIndigoLight)
+        ) {
+            Icon(
+                imageVector = Icons.Default.School,
+                contentDescription = null,
+                tint = PrimaryIndigo,
+                modifier = Modifier.size(56.dp)
+            )
+        }
+
+        Spacer(modifier = Modifier.height(24.dp))
+
+        Text(
+            text = "هل يوجد امتحان اليوم؟",
+            style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold),
+            color = MaterialTheme.colorScheme.onSurface
+        )
+
+        Spacer(modifier = Modifier.height(8.dp))
+
+        Text(
+            text = "سجل نتائج الامتحان والدرجات لتوثيق مستوى الطلاب الشهري والأكاديمي.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+            modifier = Modifier.padding(horizontal = 16.dp)
+        )
+
+        Spacer(modifier = Modifier.height(32.dp))
+
+        Button(
+            onClick = {
+                viewModel.setSkipExam(false)
+                viewModel.goToStep(StartLessonStep.EXAM)
+            },
+            colors = ButtonDefaults.buttonColors(containerColor = PrimaryIndigo),
+            shape = RoundedCornerShape(16.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(52.dp)
+        ) {
+            Text("نعم، تسجيل الامتحان", style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold))
+        }
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        OutlinedButton(
+            onClick = {
+                viewModel.setSkipExam(true)
+                viewModel.goToStep(StartLessonStep.REVIEW)
+            },
+            shape = RoundedCornerShape(16.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(52.dp)
+        ) {
+            Text("تخطي ومتابعة لإنهاء الحصة", style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold))
         }
     }
 }

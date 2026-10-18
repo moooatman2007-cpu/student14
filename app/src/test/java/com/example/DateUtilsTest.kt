@@ -1,11 +1,17 @@
 package com.example
 
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
+
 import com.example.util.DateUtils
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Test
 import java.time.LocalDate
 
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [36])
 class DateUtilsTest {
 
     @Test

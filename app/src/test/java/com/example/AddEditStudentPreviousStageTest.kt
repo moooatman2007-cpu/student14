@@ -56,7 +56,7 @@ class AddEditStudentPreviousStageTest {
             hasWhatsApp = true,
             alternativePhone = null
         )
-        val createdStudent = addResult.getOrThrow()
+        val createdStudent = addResult.getOrThrow().data
         val savedStateHandle = SavedStateHandle(mapOf("studentId" to createdStudent.studentId))
 
         val viewModel = AddEditStudentViewModel(
@@ -86,7 +86,7 @@ class AddEditStudentPreviousStageTest {
             hasWhatsApp = true,
             alternativePhone = null
         )
-        val createdStudent = addResult.getOrThrow()
+        val createdStudent = addResult.getOrThrow().data
 
         // 2. Teacher switches educational stage to Secondary (ثانوي)
         gradeRepository.setStage(EducationalStages.SECONDARY)
@@ -126,7 +126,7 @@ class AddEditStudentPreviousStageTest {
             hasWhatsApp = true,
             alternativePhone = null
         )
-        val student = addResult.getOrThrow()
+        val student = addResult.getOrThrow().data
 
         // 2. Teacher switches stage to Secondary
         gradeRepository.setStage(EducationalStages.SECONDARY)
@@ -170,7 +170,7 @@ class AddEditStudentPreviousStageTest {
             hasWhatsApp = true,
             alternativePhone = null
         )
-        val student = addResult.getOrThrow()
+        val student = addResult.getOrThrow().data
 
         // 2. Teacher switches stage to Secondary
         gradeRepository.setStage(EducationalStages.SECONDARY)

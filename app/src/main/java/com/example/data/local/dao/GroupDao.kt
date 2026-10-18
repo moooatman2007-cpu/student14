@@ -15,11 +15,21 @@ interface GroupDao {
     @Query("SELECT * FROM groups WHERE teacher_id = :teacherId AND grade_id = :gradeId")
     fun observeGroupsByGrade(teacherId: String, gradeId: String): Flow<List<GroupEntity>>
 
-    @Query("SELECT * FROM groups WHERE id = :groupId")
-    fun observeGroupById(groupId: String): Flow<GroupEntity?>
+    @Query("""
+        SELECT * FROM groups
+        WHERE teacher_id = :teacherId
+          AND id = :groupId
+        LIMIT 1
+    """)
+    fun observeGroupById(teacherId: String, groupId: String): Flow<GroupEntity?>
 
-    @Query("SELECT * FROM groups WHERE id = :groupId")
-    suspend fun getGroupById(groupId: String): GroupEntity?
+    @Query("""
+        SELECT * FROM groups
+        WHERE teacher_id = :teacherId
+          AND id = :groupId
+        LIMIT 1
+    """)
+    suspend fun getGroupById(teacherId: String, groupId: String): GroupEntity?
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertGroup(group: GroupEntity)

@@ -1,5 +1,9 @@
 package com.example
 
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
+
 import com.example.data.auth.AuthActionContext
 import com.example.data.auth.SafeAuthErrorMapper
 import org.junit.Assert.assertEquals
@@ -7,6 +11,8 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [36])
 class SafeAuthErrorMapperTest {
 
     @Test

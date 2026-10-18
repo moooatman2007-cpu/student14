@@ -13,7 +13,8 @@ data class Teacher(
     @SerialName("subject") val subject: String? = null,
     @SerialName("center_name") val centerName: String? = null,
     @SerialName("educational_stage") val educationalStage: String? = null,
-    @SerialName("theme_mode") val themeMode: String = "SYSTEM"
+    @SerialName("theme_mode") val themeMode: String = "SYSTEM",
+    @SerialName("account_status") val accountStatus: String = "pending"
 )
 
 @Serializable

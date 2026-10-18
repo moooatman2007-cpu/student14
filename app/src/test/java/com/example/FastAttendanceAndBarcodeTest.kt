@@ -288,7 +288,7 @@ class FastAttendanceAndBarcodeTest {
             parentPhone = "01012345678",
             hasWhatsApp = true,
             alternativePhone = null
-        ).getOrThrow()
+        ).getOrThrow().data
 
         val viewModel = FastAttendanceViewModel(
             studentRepository = studentRepository,
@@ -337,7 +337,7 @@ class FastAttendanceAndBarcodeTest {
             parentPhone = "01012345678",
             hasWhatsApp = true,
             alternativePhone = null
-        ).getOrThrow()
+        ).getOrThrow().data
 
         val viewModel = FastAttendanceViewModel(
             studentRepository = studentRepository,
@@ -376,14 +376,14 @@ class FastAttendanceAndBarcodeTest {
             parentPhone = "01012345678",
             hasWhatsApp = true,
             alternativePhone = null
-        ).getOrThrow()
+        ).getOrThrow().data
         val s2 = studentRepository.addStudent(
             fullName = "طالب غير مسجل",
             gradeId = targetGrade.id,
             parentPhone = "01012345679",
             hasWhatsApp = true,
             alternativePhone = null
-        ).getOrThrow()
+        ).getOrThrow().data
 
         val viewModel = FastAttendanceViewModel(
             studentRepository = studentRepository,
@@ -424,7 +424,7 @@ class FastAttendanceAndBarcodeTest {
             parentPhone = "01012345678",
             hasWhatsApp = true,
             alternativePhone = null
-        ).getOrThrow()
+        ).getOrThrow().data
 
         val viewModel = FastAttendanceViewModel(
             studentRepository = studentRepository,
@@ -460,7 +460,7 @@ class FastAttendanceAndBarcodeTest {
             parentPhone = "01012345678",
             hasWhatsApp = true,
             alternativePhone = null
-        ).getOrThrow()
+        ).getOrThrow().data
 
         val viewModel = FastAttendanceViewModel(
             studentRepository = studentRepository,
@@ -500,7 +500,7 @@ class FastAttendanceAndBarcodeTest {
             parentPhone = "01012345678",
             hasWhatsApp = true,
             alternativePhone = null
-        ).getOrThrow()
+        ).getOrThrow().data
 
         // Create failing repository
         val failingAttendanceRepo = object : AttendanceRepository {
@@ -509,7 +509,7 @@ class FastAttendanceAndBarcodeTest {
             override fun getAttendanceForStudentByMonth(studentId: String, year: Int, month: Int): Flow<List<Attendance>> = flowOf(emptyList())
             override suspend fun getAttendanceSummaryForStudent(studentId: String, year: Int, month: Int): AttendanceSummary = AttendanceSummary()
             override suspend fun getTodayAttendanceCount(): Pair<Int, Int> = Pair(0, 0)
-            override suspend fun recordOrUpdateAttendance(studentId: String, date: String, status: AttendanceStatus, note: String?, groupId: String?): Result<Attendance> {
+            override suspend fun recordOrUpdateAttendance(studentId: String, date: String, status: AttendanceStatus, note: String?, groupId: String?): Result<com.example.core.model.SyncResult<Attendance>> {
                 return Result.failure(Exception("Network socket timeout"))
             }
             override suspend fun recordBatchAttendance(
@@ -564,7 +564,7 @@ class FastAttendanceAndBarcodeTest {
             parentPhone = "01012345678",
             hasWhatsApp = true,
             alternativePhone = null
-        ).getOrThrow()
+        ).getOrThrow().data
 
         var shouldFail = true
         val retryableRepo = object : AttendanceRepository {
@@ -573,7 +573,7 @@ class FastAttendanceAndBarcodeTest {
             override fun getAttendanceForStudentByMonth(studentId: String, year: Int, month: Int): Flow<List<Attendance>> = flowOf(emptyList())
             override suspend fun getAttendanceSummaryForStudent(studentId: String, year: Int, month: Int): AttendanceSummary = AttendanceSummary()
             override suspend fun getTodayAttendanceCount(): Pair<Int, Int> = Pair(0, 0)
-            override suspend fun recordOrUpdateAttendance(studentId: String, date: String, status: AttendanceStatus, note: String?, groupId: String?): Result<Attendance> {
+            override suspend fun recordOrUpdateAttendance(studentId: String, date: String, status: AttendanceStatus, note: String?, groupId: String?): Result<com.example.core.model.SyncResult<Attendance>> {
                 if (shouldFail) {
                     return Result.failure(Exception("Network error"))
                 }

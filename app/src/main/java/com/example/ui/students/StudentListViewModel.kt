@@ -10,6 +10,7 @@ import com.example.data.repository.RepositoryProvider
 import com.example.data.repository.StudentRepository
 import com.example.data.repository.SupabaseGradeRepository
 import com.example.data.repository.SupabaseStudentRepository
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -17,7 +18,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.debounce
-import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
@@ -96,13 +97,22 @@ class StudentListViewModel(
 
         viewModelScope.launch {
             combine(
-                _searchQuery.debounce(150),
-                _selectedGradeId
-            ) { query, gradeId ->
-                Pair(query, gradeId)
-            }.flatMapLatest { (query, gradeId) ->
-                studentRepository.searchStudents(query, gradeId)
-            }.collect { studentsList ->
+                _searchQuery.debounce(100),
+                _selectedGradeId,
+                studentRepository.getStudents()
+            ) { query, gradeId, allStudents ->
+                val q = query.trim().lowercase()
+                allStudents.filter { student ->
+                    if (student.deletedAt != null) return@filter false
+                    val matchesGrade = gradeId == null || student.gradeId == gradeId
+                    val matchesQuery = q.isEmpty() ||
+                            student.fullName.lowercase().contains(q) ||
+                            student.studentCode.lowercase().contains(q) ||
+                            student.parentPhone.contains(q)
+                    matchesGrade && matchesQuery
+                }
+            }.flowOn(Dispatchers.Default)
+            .collect { studentsList ->
                 _uiState.update {
                     it.copy(
                         students = studentsList,

@@ -78,7 +78,7 @@ class StudentDetailRefreshLifecycleTest {
 
     @Test
     fun testSingleRefresh_QueriesAndPopulatesStateCorrectly() = runTest {
-        val student = studentRepository.addStudent("أحمد خالد", "prep_1", "01011111111", true, null).getOrThrow()
+        val student = studentRepository.addStudent("أحمد خالد", "prep_1", "01011111111", true, null).map { it.data }.getOrThrow()
 
         // Seed some data for student
         attendanceRepository.recordOrUpdateAttendance(student.studentId, "2026-09-05", AttendanceStatus.PRESENT, null)
@@ -110,7 +110,7 @@ class StudentDetailRefreshLifecycleTest {
 
     @Test
     fun testRapidMonthSwitching_CancelsPreviousRefreshes_NoCollectorAccumulation() = runTest {
-        val student = studentRepository.addStudent("عمر فاروق", "prep_1", "01022222222", true, null).getOrThrow()
+        val student = studentRepository.addStudent("عمر فاروق", "prep_1", "01022222222", true, null).map { it.data }.getOrThrow()
 
         val viewModel = StudentDetailViewModel(
             savedStateHandle = SavedStateHandle(mapOf("studentId" to student.studentId)),
@@ -141,8 +141,8 @@ class StudentDetailRefreshLifecycleTest {
 
     @Test
     fun testChangingStudentDuringRefresh_StaleResponseDoesNotOverwriteNewStudent() = runTest {
-        val student1 = studentRepository.addStudent("طالب أول", "prep_1", "01033333331", true, null).getOrThrow()
-        val student2 = studentRepository.addStudent("طالب ثاني", "prep_1", "01033333332", true, null).getOrThrow()
+        val student1 = studentRepository.addStudent("طالب أول", "prep_1", "01033333331", true, null).map { it.data }.getOrThrow()
+        val student2 = studentRepository.addStudent("طالب ثاني", "prep_1", "01033333332", true, null).map { it.data }.getOrThrow()
 
         val slowAttendanceRepository = object : AttendanceRepository by attendanceRepository {
             override fun getAttendanceForStudentByMonth(studentId: String, year: Int, month: Int): Flow<List<Attendance>> = flow {
@@ -181,7 +181,7 @@ class StudentDetailRefreshLifecycleTest {
 
     @Test
     fun testTabSwitching_DoesNotAccumulateLingeringCollectors() = runTest {
-        val student = studentRepository.addStudent("محمود سمير", "prep_1", "01044444444", true, null).getOrThrow()
+        val student = studentRepository.addStudent("محمود سمير", "prep_1", "01044444444", true, null).map { it.data }.getOrThrow()
 
         val viewModel = StudentDetailViewModel(
             savedStateHandle = SavedStateHandle(mapOf("studentId" to student.studentId)),

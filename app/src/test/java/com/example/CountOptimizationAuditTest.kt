@@ -72,7 +72,7 @@ class CountOptimizationAuditTest {
             parentPhone = "01000000001",
             hasWhatsApp = true,
             alternativePhone = null
-        ).getOrThrow()
+        ).map { it.data }.getOrThrow()
 
         val student2 = studentRepository.addStudent(
             fullName = "طالب 2",
@@ -80,7 +80,7 @@ class CountOptimizationAuditTest {
             parentPhone = "01000000002",
             hasWhatsApp = true,
             alternativePhone = null
-        ).getOrThrow()
+        ).map { it.data }.getOrThrow()
 
         val todayStr = SimpleDateFormat("yyyy-MM-dd", Locale.ENGLISH).format(Date())
 
@@ -104,7 +104,7 @@ class CountOptimizationAuditTest {
             parentPhone = "01000000003",
             hasWhatsApp = true,
             alternativePhone = null
-        ).getOrThrow()
+        ).map { it.data }.getOrThrow()
 
         val calendar = Calendar.getInstance()
         val currentYear = calendar.get(Calendar.YEAR)
@@ -145,7 +145,7 @@ class CountOptimizationAuditTest {
             parentPhone = "01000000004",
             hasWhatsApp = true,
             alternativePhone = null
-        ).getOrThrow()
+        ).map { it.data }.getOrThrow()
 
         val calendar = Calendar.getInstance()
         val currentYear = calendar.get(Calendar.YEAR)
@@ -176,7 +176,7 @@ class CountOptimizationAuditTest {
             parentPhone = "01000000005",
             hasWhatsApp = true,
             alternativePhone = null
-        ).getOrThrow()
+        ).map { it.data }.getOrThrow()
 
         val calendar = Calendar.getInstance()
         val currentYear = calendar.get(Calendar.YEAR)

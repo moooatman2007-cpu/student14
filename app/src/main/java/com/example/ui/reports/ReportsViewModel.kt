@@ -4,9 +4,18 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.core.model.*
 import com.example.data.repository.*
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import java.time.LocalDate
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
+import io.github.jan.supabase.auth.auth
+import java.util.concurrent.TimeUnit
+import com.example.data.SupabaseClientProvider
 
 enum class ReportsTab(val titleAr: String) {
     GROUP_DAILY("تقرير مجموعة"),
@@ -28,7 +37,29 @@ enum class DailyAttendanceStatus(val labelAr: String, val iconSymbol: String) {
 data class StudentDailyAttendance(
     val student: Student,
     val status: DailyAttendanceStatus,
-    val note: String? = null
+    val note: String? = null,
+    val attendance: Attendance? = null
+) {
+    val attendanceId: String? get() = attendance?.attendanceId
+}
+
+data class StudentDailyRecitation(
+    val student: Student,
+    val recitation: Recitation
+)
+
+data class StudentDailyExam(
+    val student: Student,
+    val exam: Exam
+)
+
+data class NotificationBatchSummary(
+    val totalCount: Int,
+    val createdCount: Int,
+    val alreadyExistsCount: Int,
+    val failedCount: Int,
+    val skippedCount: Int,
+    val message: String
 )
 
 enum class GroupReportMode(val labelAr: String) {
@@ -67,8 +98,13 @@ data class GroupDailyReportData(
     val presentCount: Int,
     val absentCount: Int,
     val noRecordCount: Int,
-    val studentList: List<StudentDailyAttendance>
-)
+    val studentList: List<StudentDailyAttendance>,
+    val dailyRecitations: List<StudentDailyRecitation> = emptyList(),
+    val dailyExams: List<StudentDailyExam> = emptyList()
+) {
+    val absentStudents: List<StudentDailyAttendance>
+        get() = studentList.filter { it.status == DailyAttendanceStatus.ABSENT && it.attendance != null }
+}
 
 data class GroupBreakdown(
     val group: Group,
@@ -86,8 +122,14 @@ data class GradeDailyReportData(
     val presentCount: Int,
     val absentCount: Int,
     val noRecordCount: Int,
-    val groupBreakdowns: List<GroupBreakdown>
-)
+    val groupBreakdowns: List<GroupBreakdown>,
+    val studentList: List<StudentDailyAttendance> = emptyList(),
+    val dailyRecitations: List<StudentDailyRecitation> = emptyList(),
+    val dailyExams: List<StudentDailyExam> = emptyList()
+) {
+    val absentStudents: List<StudentDailyAttendance>
+        get() = studentList.filter { it.status == DailyAttendanceStatus.ABSENT && it.attendance != null }
+}
 
 data class StageDailyReport(
     val stageName: String,
@@ -165,7 +207,10 @@ data class ReportsUiState(
     val gradeDailyReport: GradeDailyReportData? = null,
     val teacherDailyReport: TeacherDailyReportData? = null,
     val studentReport: StudentReportData? = null,
-    val groupReport: GroupReportData? = null
+    val groupReport: GroupReportData? = null,
+    val currentMonthlyReport: MonthlyReport? = null,
+    val isSendingNotification: Boolean = false,
+    val notificationMessage: String? = null
 )
 
 private data class FilterParams(
@@ -189,6 +234,13 @@ private data class RepoData(
     val homework: List<Homework>
 )
 
+private data class StudentDailyStatusInfo(
+    val effectiveGroupId: String?,
+    val status: DailyAttendanceStatus,
+    val note: String?,
+    val attendance: Attendance?
+)
+
 class ReportsViewModel(
     private val studentRepository: StudentRepository = RepositoryProvider.studentRepository,
     private val gradeRepository: GradeRepository = RepositoryProvider.gradeRepository,
@@ -197,7 +249,8 @@ class ReportsViewModel(
     private val examRepository: ExamRepository = RepositoryProvider.examRepository,
     private val homeworkRepository: HomeworkRepository = RepositoryProvider.homeworkRepository,
     private val groupRepository: GroupRepository = RepositoryProvider.groupRepository,
-    private val teacherRepository: TeacherRepository = RepositoryProvider.teacherRepository
+    private val teacherRepository: TeacherRepository = RepositoryProvider.teacherRepository,
+    private val notificationEventRepository: NotificationEventRepository = RepositoryProvider.notificationEventRepository
 ) : ViewModel() {
 
     private val _selectedTab = MutableStateFlow(ReportsTab.GROUP_DAILY)
@@ -208,6 +261,9 @@ class ReportsViewModel(
     private val _selectedGradeId = MutableStateFlow<String?>(null)
     private val _selectedGroupId = MutableStateFlow<String?>(null)
     private val _groupReportMode = MutableStateFlow(GroupReportMode.PERIOD)
+    private val _currentMonthlyReport = MutableStateFlow<MonthlyReport?>(null)
+    private val _isSendingNotification = MutableStateFlow(false)
+    private val _notificationMessage = MutableStateFlow<String?>(null)
 
     private val _uiState = MutableStateFlow(ReportsUiState())
     val uiState: StateFlow<ReportsUiState> = _uiState.asStateFlow()
@@ -309,10 +365,13 @@ class ReportsViewModel(
 
                 val dateStr = selectedDate.toString()
                 val dateAttendance = allAttendance.filter { it.date == dateStr }
+                val dateRecitations = allRecitations.filter { it.date == dateStr }
+                val dateExams = allExams.filter { it.date == dateStr }
+                val dateAttendanceByStudent = dateAttendance.associateBy { it.studentId }
 
-                // Map students to their effective status & group for selectedDate
+                // Map students to their effective status & group for selectedDate (O(1) indexed lookup)
                 val studentDailyMap = filteredStudents.associateWith { s ->
-                    val att = dateAttendance.find { it.studentId == s.studentId }
+                    val att = dateAttendanceByStudent[s.studentId]
                     val effectiveGroupId = att?.groupId ?: s.groupId
                     val status = if (att != null) {
                         if (att.status == AttendanceStatus.PRESENT || att.status == AttendanceStatus.LATE) {
@@ -323,21 +382,33 @@ class ReportsViewModel(
                     } else {
                         DailyAttendanceStatus.NO_RECORD
                     }
-                    Triple(effectiveGroupId, status, att?.note)
+                    StudentDailyStatusInfo(effectiveGroupId, status, att?.note, att)
                 }
 
                 // 1. Group Daily & Period Report
                 val group = if (groupId != null) filteredGroups.find { it.id == groupId } else null
                 val groupDailyReport = if (group != null) {
                     val gradeName = filteredGrades.find { it.id == group.gradeId }?.name ?: ""
-                    val groupStudentsWithStatus = studentDailyMap.filter { (s, triple) ->
-                        triple.first == group.id
-                    }.map { (s, triple) ->
+                    val groupStudentsWithStatus = studentDailyMap.filter { (s, info) ->
+                        info.effectiveGroupId == group.id
+                    }.map { (s, info) ->
                         StudentDailyAttendance(
                             student = s,
-                            status = triple.second,
-                            note = triple.third
+                            status = info.status,
+                            note = info.note,
+                            attendance = info.attendance
                         )
+                    }.sortedBy { it.student.fullName }
+
+                    val groupStudentMap = groupStudentsWithStatus.associateBy { it.student.studentId }
+                    val groupDailyRecitations = dateRecitations.mapNotNull { rec ->
+                        val s = groupStudentMap[rec.studentId]?.student ?: filteredStudents.find { it.studentId == rec.studentId && it.groupId == group.id }
+                        if (s != null) StudentDailyRecitation(student = s, recitation = rec) else null
+                    }.sortedBy { it.student.fullName }
+
+                    val groupDailyExams = dateExams.mapNotNull { exam ->
+                        val s = groupStudentMap[exam.studentId]?.student ?: filteredStudents.find { it.studentId == exam.studentId && it.groupId == group.id }
+                        if (s != null) StudentDailyExam(student = s, exam = exam) else null
                     }.sortedBy { it.student.fullName }
 
                     GroupDailyReportData(
@@ -348,7 +419,9 @@ class ReportsViewModel(
                         presentCount = groupStudentsWithStatus.count { it.status == DailyAttendanceStatus.PRESENT },
                         absentCount = groupStudentsWithStatus.count { it.status == DailyAttendanceStatus.ABSENT },
                         noRecordCount = groupStudentsWithStatus.count { it.status == DailyAttendanceStatus.NO_RECORD },
-                        studentList = groupStudentsWithStatus
+                        studentList = groupStudentsWithStatus,
+                        dailyRecitations = groupDailyRecitations,
+                        dailyExams = groupDailyExams
                     )
                 } else null
 
@@ -419,30 +492,53 @@ class ReportsViewModel(
                     if (grade != null) {
                         val gradeGroups = filteredGroups.filter { it.gradeId == gradeId }
                         val groupBreakdowns = gradeGroups.map { g ->
-                            val gStudents = studentDailyMap.filter { (_, triple) -> triple.first == g.id }
+                            val gStudents = studentDailyMap.filter { (_, info) -> info.effectiveGroupId == g.id }
                             GroupBreakdown(
                                 group = g,
                                 totalStudents = gStudents.size,
-                                presentCount = gStudents.count { it.value.second == DailyAttendanceStatus.PRESENT },
-                                absentCount = gStudents.count { it.value.second == DailyAttendanceStatus.ABSENT },
-                                noRecordCount = gStudents.count { it.value.second == DailyAttendanceStatus.NO_RECORD }
+                                presentCount = gStudents.count { it.value.status == DailyAttendanceStatus.PRESENT },
+                                absentCount = gStudents.count { it.value.status == DailyAttendanceStatus.ABSENT },
+                                noRecordCount = gStudents.count { it.value.status == DailyAttendanceStatus.NO_RECORD }
                             )
                         }
 
-                        val gradeStudents = studentDailyMap.filter { (s, triple) ->
-                            val g = filteredGroups.find { grp -> grp.id == triple.first }
-                            g?.gradeId == gradeId || (triple.first == null && s.gradeId == gradeId)
+                        val gradeStudents = studentDailyMap.filter { (s, info) ->
+                            val g = filteredGroups.find { grp -> grp.id == info.effectiveGroupId }
+                            g?.gradeId == gradeId || (info.effectiveGroupId == null && s.gradeId == gradeId)
                         }
+
+                        val gradeDailyStudentsWithStatus = gradeStudents.map { (s, info) ->
+                            StudentDailyAttendance(
+                                student = s,
+                                status = info.status,
+                                note = info.note,
+                                attendance = info.attendance
+                            )
+                        }.sortedBy { it.student.fullName }
+
+                        val gradeStudentMap = gradeDailyStudentsWithStatus.associateBy { it.student.studentId }
+                        val gradeDailyRecitations = dateRecitations.mapNotNull { rec ->
+                            val s = gradeStudentMap[rec.studentId]?.student ?: filteredStudents.find { it.studentId == rec.studentId && it.gradeId == gradeId }
+                            if (s != null) StudentDailyRecitation(student = s, recitation = rec) else null
+                        }.sortedBy { it.student.fullName }
+
+                        val gradeDailyExams = dateExams.mapNotNull { exam ->
+                            val s = gradeStudentMap[exam.studentId]?.student ?: filteredStudents.find { it.studentId == exam.studentId && it.gradeId == gradeId }
+                            if (s != null) StudentDailyExam(student = s, exam = exam) else null
+                        }.sortedBy { it.student.fullName }
 
                         GradeDailyReportData(
                             grade = grade,
                             date = selectedDate,
                             totalStudents = gradeStudents.size,
                             totalGroups = gradeGroups.size,
-                            presentCount = gradeStudents.count { it.value.second == DailyAttendanceStatus.PRESENT },
-                            absentCount = gradeStudents.count { it.value.second == DailyAttendanceStatus.ABSENT },
-                            noRecordCount = gradeStudents.count { it.value.second == DailyAttendanceStatus.NO_RECORD },
-                            groupBreakdowns = groupBreakdowns
+                            presentCount = gradeStudents.count { it.value.status == DailyAttendanceStatus.PRESENT },
+                            absentCount = gradeStudents.count { it.value.status == DailyAttendanceStatus.ABSENT },
+                            noRecordCount = gradeStudents.count { it.value.status == DailyAttendanceStatus.NO_RECORD },
+                            groupBreakdowns = groupBreakdowns,
+                            studentList = gradeDailyStudentsWithStatus,
+                            dailyRecitations = gradeDailyRecitations,
+                            dailyExams = gradeDailyExams
                         )
                     } else null
                 } else null
@@ -454,9 +550,9 @@ class ReportsViewModel(
                     filteredGroups.any { it.gradeId == grade.id } || filteredStudents.any { it.gradeId == grade.id }
                 }
 
-                val allPresentCount = studentDailyMap.count { it.value.second == DailyAttendanceStatus.PRESENT }
-                val allAbsentCount = studentDailyMap.count { it.value.second == DailyAttendanceStatus.ABSENT }
-                val allNoRecordCount = studentDailyMap.count { it.value.second == DailyAttendanceStatus.NO_RECORD }
+                val allPresentCount = studentDailyMap.count { it.value.status == DailyAttendanceStatus.PRESENT }
+                val allAbsentCount = studentDailyMap.count { it.value.status == DailyAttendanceStatus.ABSENT }
+                val allNoRecordCount = studentDailyMap.count { it.value.status == DailyAttendanceStatus.NO_RECORD }
 
                 val stages = EducationalStages.ALL_STAGES
                 val stageBreakdowns = stages.mapNotNull { stageName ->
@@ -468,19 +564,19 @@ class ReportsViewModel(
                     val stageGradeReports = stageGrades.mapNotNull { grade ->
                         val gradeGroups = filteredGroups.filter { it.gradeId == grade.id }
                         val groupBreakdowns = gradeGroups.map { g ->
-                            val gStudents = studentDailyMap.filter { (_, triple) -> triple.first == g.id }
+                            val gStudents = studentDailyMap.filter { (_, info) -> info.effectiveGroupId == g.id }
                             GroupBreakdown(
                                 group = g,
                                 totalStudents = gStudents.size,
-                                presentCount = gStudents.count { it.value.second == DailyAttendanceStatus.PRESENT },
-                                absentCount = gStudents.count { it.value.second == DailyAttendanceStatus.ABSENT },
-                                noRecordCount = gStudents.count { it.value.second == DailyAttendanceStatus.NO_RECORD }
+                                presentCount = gStudents.count { it.value.status == DailyAttendanceStatus.PRESENT },
+                                absentCount = gStudents.count { it.value.status == DailyAttendanceStatus.ABSENT },
+                                noRecordCount = gStudents.count { it.value.status == DailyAttendanceStatus.NO_RECORD }
                             )
                         }
 
-                        val gradeStudents = studentDailyMap.filter { (s, triple) ->
-                            val g = filteredGroups.find { grp -> grp.id == triple.first }
-                            g?.gradeId == grade.id || (triple.first == null && s.gradeId == grade.id)
+                        val gradeStudents = studentDailyMap.filter { (s, info) ->
+                            val g = filteredGroups.find { grp -> grp.id == info.effectiveGroupId }
+                            g?.gradeId == grade.id || (info.effectiveGroupId == null && s.gradeId == grade.id)
                         }
 
                         GradeDailyReportData(
@@ -488,9 +584,9 @@ class ReportsViewModel(
                             date = selectedDate,
                             totalStudents = gradeStudents.size,
                             totalGroups = gradeGroups.size,
-                            presentCount = gradeStudents.count { it.value.second == DailyAttendanceStatus.PRESENT },
-                            absentCount = gradeStudents.count { it.value.second == DailyAttendanceStatus.ABSENT },
-                            noRecordCount = gradeStudents.count { it.value.second == DailyAttendanceStatus.NO_RECORD },
+                            presentCount = gradeStudents.count { it.value.status == DailyAttendanceStatus.PRESENT },
+                            absentCount = gradeStudents.count { it.value.status == DailyAttendanceStatus.ABSENT },
+                            noRecordCount = gradeStudents.count { it.value.status == DailyAttendanceStatus.NO_RECORD },
                             groupBreakdowns = groupBreakdowns
                         )
                     }
@@ -627,7 +723,14 @@ class ReportsViewModel(
                     studentReport = studentReport,
                     groupReport = groupReport
                 )
-            }.collect { newState ->
+            }.combine(_currentMonthlyReport) { state, monthlyReport ->
+                state.copy(currentMonthlyReport = monthlyReport)
+            }.combine(_isSendingNotification) { state, isSending ->
+                state.copy(isSendingNotification = isSending)
+            }.combine(_notificationMessage) { state, msg ->
+                state.copy(notificationMessage = msg)
+            }.flowOn(Dispatchers.Default)
+            .collect { newState ->
                 _uiState.value = newState
             }
         }
@@ -643,23 +746,30 @@ class ReportsViewModel(
 
     fun setSelectedDate(date: LocalDate) {
         _selectedDate.value = date
+        fetchMonthlyReportForStudent(_selectedStudentId.value, date.year, date.monthValue)
     }
 
     fun previousDay() {
-        _selectedDate.value = _selectedDate.value.minusDays(1)
+        val newDate = _selectedDate.value.minusDays(1)
+        _selectedDate.value = newDate
+        fetchMonthlyReportForStudent(_selectedStudentId.value, newDate.year, newDate.monthValue)
     }
 
     fun nextDay() {
-        _selectedDate.value = _selectedDate.value.plusDays(1)
+        val newDate = _selectedDate.value.plusDays(1)
+        _selectedDate.value = newDate
+        fetchMonthlyReportForStudent(_selectedStudentId.value, newDate.year, newDate.monthValue)
     }
 
     fun setDateRange(start: LocalDate, end: LocalDate) {
         _startDate.value = start
         _endDate.value = end
+        fetchMonthlyReportForStudent(_selectedStudentId.value, start.year, start.monthValue)
     }
 
     fun selectStudent(studentId: String?) {
         _selectedStudentId.value = studentId
+        fetchMonthlyReportForStudent(studentId, _startDate.value.year, _startDate.value.monthValue)
     }
 
     fun selectGrade(gradeId: String?) {
@@ -668,5 +778,425 @@ class ReportsViewModel(
 
     fun selectGroup(groupId: String?) {
         _selectedGroupId.value = groupId
+    }
+
+    fun fetchMonthlyReportForStudent(studentId: String?, year: Int, month: Int) {
+        if (studentId.isNullOrBlank()) {
+            _currentMonthlyReport.value = null
+            return
+        }
+        viewModelScope.launch {
+            try {
+                val report = RepositoryProvider.monthlyReportRepository.getMonthlyReport(studentId, year, month)
+                _currentMonthlyReport.value = report
+            } catch (_: Exception) {
+                _currentMonthlyReport.value = null
+            }
+        }
+    }
+
+    /**
+     * Creates a PENDING monthly_report_notification_events record in Supabase.
+     * Android only inserts as PENDING with attempts = 0 and does not perform UPDATE/DELETE.
+     */
+    fun sendMonthlyReportNotification(
+        student: Student,
+        report: MonthlyReport,
+        onComplete: (Boolean, String) -> Unit = { _, _ -> }
+    ) {
+        if (_isSendingNotification.value) return
+
+        if (student.parentPhone.isBlank()) {
+            val msg = "لا يوجد رقم هاتف مسجل لولي الأمر."
+            _notificationMessage.value = msg
+            onComplete(false, msg)
+            return
+        }
+
+        if (report.reportId.isBlank()) {
+            val msg = "معرّف التقرير الشهري غير صالح."
+            _notificationMessage.value = msg
+            onComplete(false, msg)
+            return
+        }
+
+        viewModelScope.launch {
+            _isSendingNotification.value = true
+            try {
+                val event = NotificationEvent.MonthlyReport(
+                    teacherId = "", // Filled by repository from authenticated user session
+                    studentId = student.studentId,
+                    monthlyReportId = report.reportId
+                )
+
+                val result = notificationEventRepository.createNotificationEvent(event)
+                when (result) {
+                    is NotificationEventCreationResult.Created,
+                    is NotificationEventCreationResult.AlreadyExists -> {
+                        val isNew = result is NotificationEventCreationResult.Created
+                        val baseMsg = if (isNew) {
+                            "تم جدولة إرسال التقرير الشهري بنجاح، وجارٍ استدعاء خادم الإشعارات."
+                        } else {
+                            "تم تسجيل طلب هذا التقرير مسبقاً، وجارٍ استدعاء خادم الإشعارات لمعالجته."
+                        }
+                        _notificationMessage.value = baseMsg
+                        onComplete(true, baseMsg)
+
+                        val workerResult = notificationEventRepository.triggerNotificationWorker("MONTHLY_REPORT")
+                        when (workerResult) {
+                            is NotificationWorkerResult.Success -> {
+                                _notificationMessage.value = if (isNew) {
+                                    "تمت جدولة إشعار التقرير الشهري وتفعيل المعالجة بنجاح ✅"
+                                } else {
+                                    "تم تفعيل إعادة معالجة إشعار التقرير الشهري بنجاح ✅"
+                                }
+                            }
+                            is NotificationWorkerResult.Error -> {
+                                _notificationMessage.value = "تمت جدولة إشعار التقرير في خادم Supabase، ولكن تعذر تشغيل المعالج الفوري: ${workerResult.message}"
+                            }
+                            is NotificationWorkerResult.Skipped -> {
+                                // Worker execution skipped in offline / unconfigured environments
+                            }
+                        }
+                    }
+                    is NotificationEventCreationResult.Failed -> {
+                        val msg = result.message
+                        _notificationMessage.value = msg
+                        onComplete(false, msg)
+                    }
+                }
+            } catch (e: Exception) {
+                val msg = "حدث خطأ أثناء جدولة الإشعار: ${e.message ?: "خطأ غير معروف"}"
+                _notificationMessage.value = msg
+                onComplete(false, msg)
+            } finally {
+                _isSendingNotification.value = false
+            }
+        }
+    }
+
+    fun getAbsentStudentsForCurrentGroup(): List<StudentDailyAttendance> {
+        return _uiState.value.groupDailyReport?.absentStudents ?: emptyList()
+    }
+
+    fun getRecitationsForCurrentGroup(): List<StudentDailyRecitation> {
+        return _uiState.value.groupDailyReport?.dailyRecitations ?: emptyList()
+    }
+
+    fun getExamsForCurrentGroup(): List<StudentDailyExam> {
+        return _uiState.value.groupDailyReport?.dailyExams ?: emptyList()
+    }
+
+    fun getAbsentStudentsForCurrentGrade(): List<StudentDailyAttendance> {
+        return _uiState.value.gradeDailyReport?.absentStudents ?: emptyList()
+    }
+
+    fun getRecitationsForCurrentGrade(): List<StudentDailyRecitation> {
+        return _uiState.value.gradeDailyReport?.dailyRecitations ?: emptyList()
+    }
+
+    fun getExamsForCurrentGrade(): List<StudentDailyExam> {
+        return _uiState.value.gradeDailyReport?.dailyExams ?: emptyList()
+    }
+
+    /**
+     * Builds a list of candidate notification recipients for the current group or grade report
+     * based on the requested notification event type.
+     */
+    fun getNotificationRecipients(eventType: NotificationEventType): List<NotificationRecipient> {
+        val state = _uiState.value
+        return when (state.selectedTab) {
+            ReportsTab.GRADE_DAILY -> {
+                val gradeReport = state.gradeDailyReport ?: return emptyList()
+                when (eventType) {
+                    NotificationEventType.ABSENCE -> gradeReport.absentStudents.map {
+                        NotificationRecipient(
+                            studentId = it.student.studentId,
+                            studentName = it.student.fullName,
+                            parentPhone = it.student.parentPhone.takeIf { p -> p.isNotBlank() },
+                            sourceId = it.attendance?.attendanceId ?: "",
+                            notificationType = NotificationEventType.ABSENCE,
+                            previewDetails = "غائب في تاريخ ${gradeReport.date}",
+                            isSelectable = it.student.parentPhone.isNotBlank() && it.attendance != null,
+                            isSelected = it.student.parentPhone.isNotBlank() && it.attendance != null,
+                            deliveryStatus = if (it.student.parentPhone.isBlank()) NotificationDeliveryStatus.NO_PHONE else NotificationDeliveryStatus.IDLE
+                        )
+                    }
+                    NotificationEventType.RECITATION -> gradeReport.dailyRecitations.map {
+                        NotificationRecipient(
+                            studentId = it.student.studentId,
+                            studentName = it.student.fullName,
+                            parentPhone = it.student.parentPhone.takeIf { p -> p.isNotBlank() },
+                            sourceId = it.recitation.recitationId,
+                            notificationType = NotificationEventType.RECITATION,
+                            previewDetails = "${it.recitation.title}: ${it.recitation.score}/${it.recitation.maxScore}",
+                            isSelectable = it.student.parentPhone.isNotBlank(),
+                            isSelected = it.student.parentPhone.isNotBlank(),
+                            deliveryStatus = if (it.student.parentPhone.isBlank()) NotificationDeliveryStatus.NO_PHONE else NotificationDeliveryStatus.IDLE
+                        )
+                    }
+                    NotificationEventType.EXAM -> gradeReport.dailyExams.map {
+                        NotificationRecipient(
+                            studentId = it.student.studentId,
+                            studentName = it.student.fullName,
+                            parentPhone = it.student.parentPhone.takeIf { p -> p.isNotBlank() },
+                            sourceId = it.exam.examId,
+                            notificationType = NotificationEventType.EXAM,
+                            previewDetails = "${it.exam.examName}: ${it.exam.score}/${it.exam.maxScore}",
+                            isSelectable = it.student.parentPhone.isNotBlank(),
+                            isSelected = it.student.parentPhone.isNotBlank(),
+                            deliveryStatus = if (it.student.parentPhone.isBlank()) NotificationDeliveryStatus.NO_PHONE else NotificationDeliveryStatus.IDLE
+                        )
+                    }
+                    else -> emptyList()
+                }
+            }
+            else -> {
+                val groupReport = state.groupDailyReport ?: return emptyList()
+                when (eventType) {
+                    NotificationEventType.ABSENCE -> groupReport.absentStudents.map {
+                        NotificationRecipient(
+                            studentId = it.student.studentId,
+                            studentName = it.student.fullName,
+                            parentPhone = it.student.parentPhone.takeIf { p -> p.isNotBlank() },
+                            sourceId = it.attendance?.attendanceId ?: "",
+                            notificationType = NotificationEventType.ABSENCE,
+                            previewDetails = "غائب في تاريخ ${groupReport.date}",
+                            isSelectable = it.student.parentPhone.isNotBlank() && it.attendance != null,
+                            isSelected = it.student.parentPhone.isNotBlank() && it.attendance != null,
+                            deliveryStatus = if (it.student.parentPhone.isBlank()) NotificationDeliveryStatus.NO_PHONE else NotificationDeliveryStatus.IDLE
+                        )
+                    }
+                    NotificationEventType.RECITATION -> groupReport.dailyRecitations.map {
+                        NotificationRecipient(
+                            studentId = it.student.studentId,
+                            studentName = it.student.fullName,
+                            parentPhone = it.student.parentPhone.takeIf { p -> p.isNotBlank() },
+                            sourceId = it.recitation.recitationId,
+                            notificationType = NotificationEventType.RECITATION,
+                            previewDetails = "${it.recitation.title}: ${it.recitation.score}/${it.recitation.maxScore}",
+                            isSelectable = it.student.parentPhone.isNotBlank(),
+                            isSelected = it.student.parentPhone.isNotBlank(),
+                            deliveryStatus = if (it.student.parentPhone.isBlank()) NotificationDeliveryStatus.NO_PHONE else NotificationDeliveryStatus.IDLE
+                        )
+                    }
+                    NotificationEventType.EXAM -> groupReport.dailyExams.map {
+                        NotificationRecipient(
+                            studentId = it.student.studentId,
+                            studentName = it.student.fullName,
+                            parentPhone = it.student.parentPhone.takeIf { p -> p.isNotBlank() },
+                            sourceId = it.exam.examId,
+                            notificationType = NotificationEventType.EXAM,
+                            previewDetails = "${it.exam.examName}: ${it.exam.score}/${it.exam.maxScore}",
+                            isSelectable = it.student.parentPhone.isNotBlank(),
+                            isSelected = it.student.parentPhone.isNotBlank(),
+                            deliveryStatus = if (it.student.parentPhone.isBlank()) NotificationDeliveryStatus.NO_PHONE else NotificationDeliveryStatus.IDLE
+                        )
+                    }
+                    else -> emptyList()
+                }
+            }
+        }
+    }
+
+    /**
+     * Sends targeted batch notification events to Supabase as PENDING records.
+     * Uses notificationEventRepository.createNotificationEvent(...) directly.
+     * Android does not send WhatsApp messages directly.
+     */
+    fun sendBatchNotifications(
+        recipients: List<NotificationRecipient>,
+        onComplete: (NotificationBatchSummary) -> Unit = {}
+    ) {
+        if (_isSendingNotification.value) return
+        if (recipients.isEmpty()) {
+            val summary = NotificationBatchSummary(
+                totalCount = 0,
+                createdCount = 0,
+                alreadyExistsCount = 0,
+                failedCount = 0,
+                skippedCount = 0,
+                message = "لا يوجد طلاب محددين للإرسال"
+            )
+            _notificationMessage.value = summary.message
+            onComplete(summary)
+            return
+        }
+
+        viewModelScope.launch {
+            _isSendingNotification.value = true
+            try {
+                var created = 0
+                var alreadyExists = 0
+                var failed = 0
+                var skipped = 0
+
+                for (r in recipients) {
+                    if (r.parentPhone.isNullOrBlank() || r.sourceId.isBlank() || r.studentId.isBlank()) {
+                        skipped++
+                        continue
+                    }
+
+                    val domainEvent: NotificationEvent = when (r.notificationType) {
+                        NotificationEventType.ABSENCE -> NotificationEvent.Absence(
+                            teacherId = "",
+                            studentId = r.studentId,
+                            attendanceId = r.sourceId
+                        )
+                        NotificationEventType.RECITATION -> NotificationEvent.Recitation(
+                            teacherId = "",
+                            studentId = r.studentId,
+                            recitationId = r.sourceId
+                        )
+                        NotificationEventType.EXAM -> NotificationEvent.Exam(
+                            teacherId = "",
+                            studentId = r.studentId,
+                            examId = r.sourceId
+                        )
+                        NotificationEventType.HOMEWORK -> NotificationEvent.Homework(
+                            teacherId = "",
+                            studentId = r.studentId,
+                            homeworkId = r.sourceId
+                        )
+                        NotificationEventType.MONTHLY_REPORT -> NotificationEvent.MonthlyReport(
+                            teacherId = "",
+                            studentId = r.studentId,
+                            monthlyReportId = r.sourceId
+                        )
+                    }
+
+                    when (val result = notificationEventRepository.createNotificationEvent(domainEvent)) {
+                        is NotificationEventCreationResult.Created -> created++
+                        is NotificationEventCreationResult.AlreadyExists -> alreadyExists++
+                        is NotificationEventCreationResult.Failed -> failed++
+                    }
+                }
+
+                val msg = buildString {
+                    append("تم تسجيل ${created} إشعار جديد في خادم Supabase: ")
+                    if (alreadyExists > 0) append("($alreadyExists مسجل مسبقاً). ")
+                    if (skipped > 0) append("($skipped تم تخطيه لعدم وجود هاتف). ")
+                    if (failed > 0) append("($failed فشل).")
+                }.trim()
+
+                val summary = NotificationBatchSummary(
+                    totalCount = recipients.size,
+                    createdCount = created,
+                    alreadyExistsCount = alreadyExists,
+                    failedCount = failed,
+                    skippedCount = skipped,
+                    message = msg
+                )
+                _notificationMessage.value = msg
+                onComplete(summary)
+
+                val totalEligible = created + alreadyExists
+                if (totalEligible > 0) {
+                    val workerResult = notificationEventRepository.triggerNotificationWorker("MONTHLY_REPORT")
+                    when (workerResult) {
+                        is NotificationWorkerResult.Success -> {
+                            _notificationMessage.value = if (created > 0) {
+                                "تمت جدولة $created إشعار وتفعيل المعالجة عبر خادم الإشعارات بنجاح ✅"
+                            } else {
+                                "تم تفعيل إعادة المعالجة لـ $alreadyExists إشعار مسجل مسبقاً عبر خادم الإشعارات بنجاح ✅"
+                            }
+                        }
+                        is NotificationWorkerResult.Error -> {
+                            _notificationMessage.value = "تمت جدولة الإشعارات في خادم Supabase، لكن تعذر تشغيل المعالج الفوري: ${workerResult.message}"
+                        }
+                        is NotificationWorkerResult.Skipped -> {
+                            // No-op in test environments or when endpoint not configured
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                val msg = "حدث خطأ أثناء جدولة الإشعارات: ${e.message ?: "خطأ غير معروف"}"
+                val summary = NotificationBatchSummary(
+                    totalCount = recipients.size,
+                    createdCount = 0,
+                    alreadyExistsCount = 0,
+                    failedCount = recipients.size,
+                    skippedCount = 0,
+                    message = msg
+                )
+                _notificationMessage.value = msg
+                onComplete(summary)
+            } finally {
+                _isSendingNotification.value = false
+            }
+        }
+    }
+
+    fun sendAbsenceNotifications(
+        targets: List<StudentDailyAttendance>,
+        onComplete: (NotificationBatchSummary) -> Unit = {}
+    ) {
+        val recipients = targets.mapNotNull { target ->
+            val attId = target.attendance?.attendanceId ?: return@mapNotNull null
+            NotificationRecipient(
+                studentId = target.student.studentId,
+                studentName = target.student.fullName,
+                parentPhone = target.student.parentPhone.takeIf { it.isNotBlank() },
+                sourceId = attId,
+                notificationType = NotificationEventType.ABSENCE,
+                previewDetails = "غائب في تاريخ ${_selectedDate.value}"
+            )
+        }
+        sendBatchNotifications(recipients, onComplete)
+    }
+
+    fun sendRecitationNotifications(
+        targets: List<StudentDailyRecitation>,
+        onComplete: (NotificationBatchSummary) -> Unit = {}
+    ) {
+        val recipients = targets.map { target ->
+            NotificationRecipient(
+                studentId = target.student.studentId,
+                studentName = target.student.fullName,
+                parentPhone = target.student.parentPhone.takeIf { it.isNotBlank() },
+                sourceId = target.recitation.recitationId,
+                notificationType = NotificationEventType.RECITATION,
+                previewDetails = "${target.recitation.title}: ${target.recitation.score}/${target.recitation.maxScore}"
+            )
+        }
+        sendBatchNotifications(recipients, onComplete)
+    }
+
+    fun sendExamNotifications(
+        targets: List<StudentDailyExam>,
+        onComplete: (NotificationBatchSummary) -> Unit = {}
+    ) {
+        val recipients = targets.map { target ->
+            NotificationRecipient(
+                studentId = target.student.studentId,
+                studentName = target.student.fullName,
+                parentPhone = target.student.parentPhone.takeIf { it.isNotBlank() },
+                sourceId = target.exam.examId,
+                notificationType = NotificationEventType.EXAM,
+                previewDetails = "${target.exam.examName}: ${target.exam.score}/${target.exam.maxScore}"
+            )
+        }
+        sendBatchNotifications(recipients, onComplete)
+    }
+
+    fun sendTargetedNotifications(
+        eventType: NotificationEventType,
+        targets: List<Pair<Student, String>>,
+        onComplete: (NotificationBatchSummary) -> Unit = {}
+    ) {
+        val recipients = targets.map { (student, sourceId) ->
+            NotificationRecipient(
+                studentId = student.studentId,
+                studentName = student.fullName,
+                parentPhone = student.parentPhone.takeIf { it.isNotBlank() },
+                sourceId = sourceId,
+                notificationType = eventType
+            )
+        }
+        sendBatchNotifications(recipients, onComplete)
+    }
+
+    fun clearNotificationMessage() {
+        _notificationMessage.value = null
     }
 }

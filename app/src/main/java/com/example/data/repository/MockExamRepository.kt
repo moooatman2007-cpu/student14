@@ -1,7 +1,9 @@
 package com.example.data.repository
 
+import com.example.core.model.BatchSyncStatus
 import com.example.core.model.Exam
 import com.example.core.model.ExamSummary
+import com.example.core.model.SyncResult
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -113,7 +115,7 @@ class MockExamRepository : ExamRepository {
         score: Double,
         maxScore: Double,
         note: String?
-    ): Result<Exam> {
+    ): Result<SyncResult<Exam>> {
         if (examName.isBlank()) {
             return Result.failure(IllegalArgumentException("اسم الامتحان مطلوب"))
         }
@@ -141,7 +143,7 @@ class MockExamRepository : ExamRepository {
         )
 
         _exams.update { listOf(newExam) + it }
-        return Result.success(newExam)
+        return Result.success(SyncResult(newExam, BatchSyncStatus.SAVED_TO_CLOUD))
     }
 
     override suspend fun updateExam(exam: Exam): Result<Exam> {

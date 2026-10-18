@@ -1,5 +1,9 @@
 package com.example
 
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
+
 import com.example.core.model.EducationalStages
 import com.example.core.model.Teacher
 import com.example.core.model.UpdateTeacherRequest
@@ -21,6 +25,8 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [36])
 class EducationalStageTest {
 
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
@@ -225,7 +231,7 @@ class EducationalStageTest {
             alternativePhone = "01033334444"
         )
         assertTrue(addResult.isSuccess)
-        val createdStudent = addResult.getOrThrow()
+        val createdStudent = addResult.getOrThrow().data
         assertEquals(grade1.id, createdStudent.gradeId)
         assertEquals("يوسف أحمد", createdStudent.fullName)
 
@@ -244,9 +250,9 @@ class EducationalStageTest {
         val grades = mockRepo.getGrades().first()
         val studentRepo = MockStudentRepository(mockRepo)
 
-        val s1 = studentRepo.addStudent("طالب أول", grades[0].id, "01011110001", true, null).getOrThrow()
-        val s2 = studentRepo.addStudent("طالب ثاني", grades[1].id, "01011110002", true, null).getOrThrow()
-        val s3 = studentRepo.addStudent("طالب ثالث", grades[0].id, "01011110003", true, null).getOrThrow()
+        val s1 = studentRepo.addStudent("طالب أول", grades[0].id, "01011110001", true, null).map { it.data }.getOrThrow()
+        val s2 = studentRepo.addStudent("طالب ثاني", grades[1].id, "01011110002", true, null).map { it.data }.getOrThrow()
+        val s3 = studentRepo.addStudent("طالب ثالث", grades[0].id, "01011110003", true, null).map { it.data }.getOrThrow()
 
         val grade1Students = studentRepo.getStudentsByGrade(grades[0].id).first()
         assertTrue(grade1Students.any { it.studentId == s1.studentId })

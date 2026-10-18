@@ -1,10 +1,16 @@
 package com.example.data.repository
 
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
+
 import com.example.core.model.Group
 import kotlinx.coroutines.runBlocking
 import org.junit.Test
 import org.junit.Assert.*
 
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [36])
 class GroupRepositoryTest {
     // This is a minimal test demonstrating the required logic for repository methods
     @Test

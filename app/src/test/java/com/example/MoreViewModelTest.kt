@@ -194,6 +194,20 @@ class MoreViewModelTest {
     }
 
     @Test
+    fun testRequestPairingCodeConcurrentInvocationPrevented() = runTest {
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        viewModel.onPairingPhoneNumberChange("01012345678")
+        // Trigger first call
+        viewModel.requestPairingCode()
+        assertTrue(viewModel.uiState.value.isRequestingPairingCode)
+
+        // Trigger second call while first is in-flight -> should not crash or trigger duplicate request
+        viewModel.requestPairingCode()
+        assertTrue(viewModel.uiState.value.isRequestingPairingCode)
+    }
+
+    @Test
     fun testEdgeFunctionUrlConfiguration() = runTest {
         val testUrl = "https://mytestproject.supabase.co/functions/v1/waha-session"
         assertTrue(testUrl.contains("/functions/v1/waha-session"))

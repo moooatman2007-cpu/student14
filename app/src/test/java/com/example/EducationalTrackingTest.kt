@@ -1,5 +1,9 @@
 package com.example
 
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
+
 import com.example.core.model.AttendanceStatus
 import com.example.data.repository.MockAttendanceRepository
 import com.example.data.repository.MockExamRepository
@@ -15,6 +19,8 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [36])
 class EducationalTrackingTest {
 
     private lateinit var studentRepo: MockStudentRepository
@@ -54,7 +60,7 @@ class EducationalTrackingTest {
             note = "حضر في الموعد"
         )
         assertTrue(result.isSuccess)
-        val createdAtt = result.getOrNull()
+        val createdAtt = result.getOrNull()?.data
         assertNotNull(createdAtt)
 
         val updatedList = attendanceRepo.getAttendanceForStudentByMonth(studentId, 2026, 9).first()
@@ -90,7 +96,7 @@ class EducationalTrackingTest {
             note = "ممتاز ومتقن للأحكام"
         )
         assertTrue(result.isSuccess)
-        val createdRec = result.getOrNull()
+        val createdRec = result.getOrNull()?.data
         assertNotNull(createdRec)
 
         val updatedList = recitationRepo.getRecitationsForStudent(studentId).first()
@@ -126,7 +132,7 @@ class EducationalTrackingTest {
             note = "أداء رائع"
         )
         assertTrue(result.isSuccess)
-        val createdExam = result.getOrNull()
+        val createdExam = result.getOrNull()?.data
         assertNotNull(createdExam)
 
         val updatedList = examRepo.getExamsForStudent(studentId).first()

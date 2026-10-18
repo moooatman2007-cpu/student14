@@ -1,4 +1,5 @@
 import com.google.gms.googleservices.GoogleServicesPlugin.MissingGoogleServicesStrategy
+import java.io.File
 
 plugins {
   alias(libs.plugins.android.application)
@@ -25,12 +26,16 @@ android {
   }
 
   signingConfigs {
+    val releaseKeystorePath = System.getenv("KEYSTORE_PATH") ?: "${rootDir}/my-upload-key.jks"
+    val releaseStorePassword = System.getenv("STORE_PASSWORD") ?: ""
+    val releaseKeyAlias = System.getenv("KEY_ALIAS") ?: "upload"
+    val releaseKeyPassword = System.getenv("KEY_PASSWORD") ?: releaseStorePassword
+
     create("release") {
-      val keystorePath = System.getenv("KEYSTORE_PATH") ?: "${rootDir}/my-upload-key.jks"
-      storeFile = file(keystorePath)
-      storePassword = System.getenv("STORE_PASSWORD")
-      keyAlias = "upload"
-      keyPassword = System.getenv("KEY_PASSWORD")
+      storeFile = file(releaseKeystorePath)
+      storePassword = releaseStorePassword
+      keyAlias = releaseKeyAlias
+      keyPassword = releaseKeyPassword
     }
     create("debugConfig") {
       storeFile = file("${rootDir}/debug.keystore")
@@ -46,6 +51,8 @@ android {
       isMinifyEnabled = true
       isShrinkResources = true
       proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+      // STRICT: Release builds MUST ONLY use the production release signing configuration.
+      // Under NO circumstances is debugConfig allowed as a fallback.
       signingConfig = signingConfigs.getByName("release")
     }
     debug { signingConfig = signingConfigs.getByName("debugConfig") }
@@ -79,6 +86,112 @@ secrets {
 }
 
 googleServices { missingGoogleServicesStrategy = MissingGoogleServicesStrategy.WARN }
+
+val verifyReleasePreconditions = tasks.register("verifyReleasePreconditions") {
+  description = "Validates that all production release preconditions (signing keystore, passwords, and .env Supabase credentials) are properly satisfied."
+  group = "verification"
+  val rootDirPath = rootDir.absolutePath
+  doFirst {
+    val errors = mutableListOf<String>()
+
+    // 1. Keystore file check
+    val releaseKeystorePath = System.getenv("KEYSTORE_PATH") ?: "$rootDirPath/my-upload-key.jks"
+    val keystoreFile = File(releaseKeystorePath)
+    if (!keystoreFile.exists()) {
+      errors.add("Production Keystore file missing at: ${keystoreFile.absolutePath} (Set KEYSTORE_PATH env var or place 'my-upload-key.jks' in root directory).")
+    }
+
+    // 2. STORE_PASSWORD check
+    val storePassword = System.getenv("STORE_PASSWORD")
+    if (storePassword.isNullOrBlank()) {
+      errors.add("Missing or empty 'STORE_PASSWORD' environment variable.")
+    }
+
+    // 3. KEY_ALIAS check
+    val keyAlias = System.getenv("KEY_ALIAS") ?: "upload"
+    if (keyAlias.isBlank()) {
+      errors.add("Missing or empty 'KEY_ALIAS' environment variable.")
+    }
+
+    // 4. KEY_PASSWORD check
+    val keyPassword = System.getenv("KEY_PASSWORD") ?: storePassword
+    if (keyPassword.isNullOrBlank()) {
+      errors.add("Missing or empty 'KEY_PASSWORD' environment variable.")
+    }
+
+    // 5. .env file check
+    val envFile = File(rootDirPath, ".env")
+    if (!envFile.exists() || !envFile.isFile) {
+      errors.add("Missing root '.env' file. Production Release builds require a real '.env' file containing Production Supabase configuration.")
+    } else {
+      val envMap = mutableMapOf<String, String>()
+      for (line in envFile.readLines()) {
+        val trimmed = line.trim()
+        if (trimmed.isNotEmpty() && !trimmed.startsWith("#")) {
+          val splitIndex = trimmed.indexOf('=')
+          if (splitIndex != -1) {
+            val key = trimmed.substring(0, splitIndex).trim()
+            val value = trimmed.substring(splitIndex + 1).trim().trim('"', '\'')
+            envMap[key] = value
+          }
+        }
+      }
+
+      val supabaseUrl = envMap["SUPABASE_URL"]
+      if (supabaseUrl.isNullOrBlank()) {
+        errors.add("Missing or empty 'SUPABASE_URL' in .env.")
+      } else if (supabaseUrl.contains("placeholder", ignoreCase = true)) {
+        errors.add("'SUPABASE_URL' in .env contains placeholder value.")
+      } else if (!supabaseUrl.startsWith("https://") && !supabaseUrl.startsWith("http://")) {
+        errors.add("'SUPABASE_URL' in .env must start with 'https://'.")
+      }
+
+      val supabaseKey = envMap["SUPABASE_PUBLISHABLE_KEY"]
+      if (supabaseKey.isNullOrBlank()) {
+        errors.add("Missing or empty 'SUPABASE_PUBLISHABLE_KEY' in .env.")
+      } else if (supabaseKey.contains("placeholder", ignoreCase = true)) {
+        errors.add("'SUPABASE_PUBLISHABLE_KEY' in .env contains placeholder value.")
+      }
+
+      val supabaseEdgeUrl = envMap["SUPABASE_EDGE_FUNCTION_URL"]
+      if (supabaseEdgeUrl.isNullOrBlank()) {
+        errors.add("Missing or empty 'SUPABASE_EDGE_FUNCTION_URL' in .env.")
+      } else if (supabaseEdgeUrl.contains("placeholder", ignoreCase = true)) {
+        errors.add("'SUPABASE_EDGE_FUNCTION_URL' in .env contains placeholder value.")
+      }
+    }
+
+    if (errors.isNotEmpty()) {
+      val errorMessage = buildString {
+        appendLine()
+        appendLine("==================================================================================")
+        appendLine("❌ PRODUCTION BUILD SAFETY GATE FAILED:")
+        appendLine("==================================================================================")
+        errors.forEachIndexed { index, err ->
+          appendLine("  [${index + 1}] $err")
+        }
+        appendLine("==================================================================================")
+        appendLine("Release build cannot proceed with missing or invalid production credentials.")
+        appendLine("Please provide the required keystore and .env configurations before building release.")
+        appendLine("==================================================================================")
+      }
+      throw GradleException(errorMessage)
+    }
+  }
+}
+
+tasks.matching {
+  it.name in listOf(
+    "preReleaseBuild",
+    "bundleRelease",
+    "assembleRelease",
+    "packageReleaseBundle",
+    "signReleaseBundle",
+    "validateSigningRelease"
+  )
+}.configureEach {
+  dependsOn(verifyReleasePreconditions)
+}
 
 // Some unused dependencies are commented out below instead of being removed.
 // This makes it easy to add them back in the future if needed.

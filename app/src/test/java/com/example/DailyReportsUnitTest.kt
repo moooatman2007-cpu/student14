@@ -1,5 +1,9 @@
 package com.example
 
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
+
 import com.example.core.model.AttendanceStatus
 import com.example.core.model.EducationalStages
 import com.example.core.model.Grade
@@ -33,6 +37,8 @@ import org.junit.Test
 import java.time.LocalDate
 
 @OptIn(ExperimentalCoroutinesApi::class)
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [36])
 class DailyReportsUnitTest {
 
     private val testDispatcher = StandardTestDispatcher()
@@ -112,13 +118,13 @@ class DailyReportsUnitTest {
 
         // Add 3 students and assign to groupA
         val s1Created = studentRepository.addStudent("طالب 1 (حاضر)", prepGrade.id, "01011112222", true, null).getOrThrow()
-        val s1 = studentRepository.updateStudent(s1Created.copy(groupId = groupA.id, teacherId = teacher1.id)).getOrThrow()
+        val s1 = studentRepository.updateStudent(s1Created.data.copy(groupId = groupA.id, teacherId = teacher1.id)).getOrThrow()
 
         val s2Created = studentRepository.addStudent("طالب 2 (غائب)", prepGrade.id, "01011112223", true, null).getOrThrow()
-        val s2 = studentRepository.updateStudent(s2Created.copy(groupId = groupA.id, teacherId = teacher1.id)).getOrThrow()
+        val s2 = studentRepository.updateStudent(s2Created.data.copy(groupId = groupA.id, teacherId = teacher1.id)).getOrThrow()
 
         val s3Created = studentRepository.addStudent("طالب 3 (لم يسجل)", prepGrade.id, "01011112224", true, null).getOrThrow()
-        val s3 = studentRepository.updateStudent(s3Created.copy(groupId = groupA.id, teacherId = teacher1.id)).getOrThrow()
+        val s3 = studentRepository.updateStudent(s3Created.data.copy(groupId = groupA.id, teacherId = teacher1.id)).getOrThrow()
 
         val todayStr = LocalDate.now().toString()
 
@@ -163,13 +169,13 @@ class DailyReportsUnitTest {
         val grpB = Group("g_B", teacher1.id, prepGrade.id, "مجموعة ب", true, "12:00", "14:00")
         groupRepository.setGroups(listOf(grpA, grpB))
 
-        val s1Created = studentRepository.addStudent("طالب أ1", prepGrade.id, "01000000001", true, null).getOrThrow()
+        val s1Created = studentRepository.addStudent("طالب أ1", prepGrade.id, "01000000001", true, null).getOrThrow().data
         val s1 = studentRepository.updateStudent(s1Created.copy(groupId = grpA.id, teacherId = teacher1.id)).getOrThrow()
 
-        val s2Created = studentRepository.addStudent("طالب أ2", prepGrade.id, "01000000002", true, null).getOrThrow()
+        val s2Created = studentRepository.addStudent("طالب أ2", prepGrade.id, "01000000002", true, null).getOrThrow().data
         val s2 = studentRepository.updateStudent(s2Created.copy(groupId = grpA.id, teacherId = teacher1.id)).getOrThrow()
 
-        val s3Created = studentRepository.addStudent("طالب ب1", prepGrade.id, "01000000003", true, null).getOrThrow()
+        val s3Created = studentRepository.addStudent("طالب ب1", prepGrade.id, "01000000003", true, null).getOrThrow().data
         val s3 = studentRepository.updateStudent(s3Created.copy(groupId = grpB.id, teacherId = teacher1.id)).getOrThrow()
 
         val todayStr = LocalDate.now().toString()
@@ -210,10 +216,10 @@ class DailyReportsUnitTest {
         val grp1 = Group("g_1", teacher1.id, prep1.id, "مجموعة 1", true, "10:00", "12:00")
         groupRepository.setGroups(listOf(grp1))
 
-        val s1Created = studentRepository.addStudent("طالب 1", prep1.id, "01011111111", true, null).getOrThrow()
+        val s1Created = studentRepository.addStudent("طالب 1", prep1.id, "01011111111", true, null).getOrThrow().data
         val s1 = studentRepository.updateStudent(s1Created.copy(groupId = grp1.id, teacherId = teacher1.id)).getOrThrow()
 
-        val s2Created = studentRepository.addStudent("طالب 2", prep1.id, "01022222222", true, null).getOrThrow()
+        val s2Created = studentRepository.addStudent("طالب 2", prep1.id, "01022222222", true, null).getOrThrow().data
         val s2 = studentRepository.updateStudent(s2Created.copy(groupId = grp1.id, teacherId = teacher1.id)).getOrThrow()
 
         val todayStr = LocalDate.now().toString()
@@ -244,7 +250,7 @@ class DailyReportsUnitTest {
         val grpB = Group("g_B_hist", teacher1.id, prep.id, "مجموعة ب الجديدة", true, "12:00", "14:00")
         groupRepository.setGroups(listOf(grpA, grpB))
 
-        val sCreated = studentRepository.addStudent("طالب متنقل", prep.id, "01099998888", true, null).getOrThrow()
+        val sCreated = studentRepository.addStudent("طالب متنقل", prep.id, "01099998888", true, null).getOrThrow().data
         val s = studentRepository.updateStudent(sCreated.copy(groupId = grpB.id, teacherId = teacher1.id)).getOrThrow()
 
         // Attendance on 2026-09-20 was recorded while student was in Group A
@@ -277,7 +283,7 @@ class DailyReportsUnitTest {
         val grpT2 = Group("g_t2", teacher2.id, prep.id, "مجموعة مدرس 2", true, "12:00", "14:00")
         groupRepository.setGroups(listOf(grpT1, grpT2))
 
-        val sCreated = studentRepository.addStudent("طالب1 لمدرس 1", prep.id, "01011110001", true, null).getOrThrow()
+        val sCreated = studentRepository.addStudent("طالب1 لمدرس 1", prep.id, "01011110001", true, null).getOrThrow().data
         studentRepository.updateStudent(sCreated.copy(groupId = grpT1.id, teacherId = teacher1.id))
 
         val vm = createViewModel() // teacher1 logged in

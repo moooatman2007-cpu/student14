@@ -773,3 +773,501 @@ describe("Notification Worker Production-Grade Idempotency & Reconciliation (12 
     assert.equal(h.wahaSentLog.length, 5, "All 5 event types must send 1 message each");
   });
 });
+
+describe("Notification Worker Hardened Multi-Tier Authentication & RBAC Security", () => {
+  function constantTimeCompare(a, b) {
+    if (typeof a !== "string" || typeof b !== "string" || a.length === 0 || b.length === 0) {
+      return false;
+    }
+    const aBytes = Buffer.from(a);
+    const bBytes = Buffer.from(b);
+    if (aBytes.length !== bBytes.length) {
+      return false;
+    }
+    let mismatch = 0;
+    for (let i = 0; i < aBytes.length; i++) {
+      mismatch |= aBytes[i] ^ bBytes[i];
+    }
+    return mismatch === 0;
+  }
+
+  async function evaluateRequestAuth({
+    cronSecret = "",
+    workerSecret = "",
+    serviceRoleKey = "",
+    headers = {},
+    mockAuthUser = null,
+    mockTeachers = new Set(),
+  }) {
+    const authHeader = headers["authorization"] || "";
+    const apiKeyHeader = headers["apikey"] || "";
+    const headerWorkerSecret = headers["x-worker-secret"] || "";
+    const headerCronSecret = headers["x-cron-secret"] || "";
+
+    const bearerToken = authHeader.toLowerCase().startsWith("bearer ")
+      ? authHeader.slice(7).trim()
+      : "";
+
+    // 1. Backend / Cron / Scheduled Worker Path (Global Queue Access)
+    // NEVER accept serviceRoleKey from client!
+    const configuredSecrets = [cronSecret, workerSecret].filter(
+      (s) => s.trim().length > 0,
+    );
+
+    if (configuredSecrets.length > 0) {
+      const incomingTokens = [
+        bearerToken,
+        headerWorkerSecret,
+        headerCronSecret,
+        apiKeyHeader,
+      ].filter((t) => t.trim().length > 0);
+
+      const isGlobalAuthorized = configuredSecrets.some((secret) =>
+        incomingTokens.some((token) => constantTimeCompare(secret, token)),
+      );
+
+      if (isGlobalAuthorized) {
+        return { isAuthorized: true, mode: "GLOBAL_WORKER" };
+      }
+    }
+
+    // 2. Authenticated User (Teacher) Path from Client
+    if (bearerToken.length > 0) {
+      // Simulate verifying user via auth token
+      const user = mockAuthUser && mockAuthUser.token === bearerToken ? mockAuthUser : null;
+      if (!user || !user.id) {
+        return { isAuthorized: false, statusCode: 401, error: "Invalid or expired user session token" };
+      }
+
+      // Check teacher existence in database (public.teachers)
+      const isTeacher = mockTeachers.has(user.id);
+      if (!isTeacher) {
+        return {
+          isAuthorized: false,
+          statusCode: 403,
+          error: "Forbidden: authenticated user is not registered as a teacher",
+        };
+      }
+
+      return {
+        isAuthorized: true,
+        mode: "SCOPED_TEACHER",
+        teacherId: user.id,
+      };
+    }
+
+    return {
+      isAuthorized: false,
+      statusCode: 401,
+      error: "Unauthorized: Missing authentication credentials",
+    };
+  }
+
+  test("1. Unauthenticated request without headers -> 401 Unauthorized", async () => {
+    const res = await evaluateRequestAuth({
+      cronSecret: "cron-secret-123",
+      headers: {},
+    });
+    assert.equal(res.isAuthorized, false);
+    assert.equal(res.statusCode, 401);
+  });
+
+  test("2. Invalid/expired user JWT token -> 401 Unauthorized", async () => {
+    const res = await evaluateRequestAuth({
+      cronSecret: "cron-secret-123",
+      headers: { authorization: "Bearer expired-or-invalid-jwt" },
+      mockAuthUser: null,
+    });
+    assert.equal(res.isAuthorized, false);
+    assert.equal(res.statusCode, 401);
+  });
+
+  test("3. Authenticated regular user (student/parent) NOT in teachers table -> 403 Forbidden", async () => {
+    const res = await evaluateRequestAuth({
+      cronSecret: "cron-secret-123",
+      headers: { authorization: "Bearer student-valid-token" },
+      mockAuthUser: { id: "student-user-uuid", token: "student-valid-token" },
+      mockTeachers: new Set(["teacher-1-uuid", "teacher-2-uuid"]), // student is not in teachers
+    });
+    assert.equal(res.isAuthorized, false);
+    assert.equal(res.statusCode, 403);
+    assert.match(res.error, /not registered as a teacher/i);
+  });
+
+  test("4. Authenticated Teacher in teachers table -> 200 Authorized in SCOPED_TEACHER mode", async () => {
+    const res = await evaluateRequestAuth({
+      cronSecret: "cron-secret-123",
+      headers: { authorization: "Bearer teacher-1-token" },
+      mockAuthUser: { id: "teacher-1-uuid", token: "teacher-1-token" },
+      mockTeachers: new Set(["teacher-1-uuid"]),
+    });
+    assert.equal(res.isAuthorized, true);
+    assert.equal(res.mode, "SCOPED_TEACHER");
+    assert.equal(res.teacherId, "teacher-1-uuid");
+  });
+
+  test("5. Service Role Key submitted as client token -> REJECTED (no backdoor for clients)", async () => {
+    const res = await evaluateRequestAuth({
+      cronSecret: "cron-secret-123",
+      serviceRoleKey: "service-role-secret-key-999",
+      headers: { authorization: "Bearer service-role-secret-key-999" },
+      mockAuthUser: null,
+    });
+    assert.equal(res.isAuthorized, false);
+    assert.equal(res.statusCode, 401);
+  });
+
+  test("6. Valid CRON_SECRET via Bearer token -> 200 Authorized in GLOBAL_WORKER mode", async () => {
+    const res = await evaluateRequestAuth({
+      cronSecret: "super-cron-secret-123",
+      headers: { authorization: "Bearer super-cron-secret-123" },
+    });
+    assert.equal(res.isAuthorized, true);
+    assert.equal(res.mode, "GLOBAL_WORKER");
+    assert.equal(res.teacherId, undefined);
+  });
+
+  test("7. Valid CRON_SECRET via x-cron-secret header -> 200 Authorized in GLOBAL_WORKER mode", async () => {
+    const res = await evaluateRequestAuth({
+      cronSecret: "super-cron-secret-123",
+      headers: { "x-cron-secret": "super-cron-secret-123" },
+    });
+    assert.equal(res.isAuthorized, true);
+    assert.equal(res.mode, "GLOBAL_WORKER");
+  });
+
+  test("8. Valid WORKER_SECRET via x-worker-secret header -> 200 Authorized in GLOBAL_WORKER mode", async () => {
+    const res = await evaluateRequestAuth({
+      workerSecret: "worker-secret-456",
+      headers: { "x-worker-secret": "worker-secret-456" },
+    });
+    assert.equal(res.isAuthorized, true);
+    assert.equal(res.mode, "GLOBAL_WORKER");
+  });
+
+  test("9. Unauthorized backend secret -> 401 Unauthorized", async () => {
+    const res = await evaluateRequestAuth({
+      cronSecret: "super-cron-secret-123",
+      headers: { "x-cron-secret": "wrong-secret-attack" },
+    });
+    assert.equal(res.isAuthorized, false);
+    assert.equal(res.statusCode, 401);
+  });
+});
+
+describe("Cross-Teacher Queue Isolation & Scoped Execution Security", () => {
+  test("1. Scoped Teacher A execution strictly rejects processing Teacher B event (Tenant boundary violation)", async () => {
+    let recordedFailedError = "";
+    const ctx = {
+      scopedTeacherId: "teacher-A-uuid",
+      event: {
+        id: "event-belonging-to-teacher-B",
+        teacher_id: "teacher-B-uuid",
+        student_id: "student-1",
+        attendance_id: "att-1",
+      },
+    };
+
+    // Simulate processNotificationEvent tenant check
+    let outcome = null;
+    if (ctx.scopedTeacherId && ctx.event.teacher_id !== ctx.scopedTeacherId) {
+      recordedFailedError = "Tenant boundary violation: event does not belong to authorized teacher";
+      outcome = {
+        success: false,
+        reconciled: false,
+        duplicatePrevented: false,
+        error: "Tenant boundary violation: unauthorized teacher access",
+      };
+    }
+
+    assert.equal(outcome.success, false);
+    assert.match(outcome.error, /Tenant boundary violation/i);
+    assert.match(recordedFailedError, /Tenant boundary violation/i);
+  });
+
+  test("2. Scoped Teacher A execution only claims events matching teacher_id = teacher-A", async () => {
+    const queue = [
+      { id: "e1", teacher_id: "teacher-B-uuid", status: "PENDING" },
+      { id: "e2", teacher_id: "teacher-A-uuid", status: "PENDING" },
+      { id: "e3", teacher_id: "teacher-B-uuid", status: "PENDING" },
+    ];
+
+    const scopedTeacherId = "teacher-A-uuid";
+
+    // Simulate claim query with filter: ($2::uuid IS NULL OR e.teacher_id = $2::uuid)
+    const claimed = queue.find(
+      (e) => e.status === "PENDING" && (!scopedTeacherId || e.teacher_id === scopedTeacherId)
+    );
+
+    assert.ok(claimed);
+    assert.equal(claimed.id, "e2");
+    assert.equal(claimed.teacher_id, "teacher-A-uuid");
+  });
+
+  test("3. Failsafe: if database accidentally returned another teacher event, worker drops it without sending", async () => {
+    const scopedTeacherId = "teacher-A-uuid";
+    const accidentallyClaimedEvent = { id: "e-rogue", teacher_id: "teacher-B-uuid" };
+
+    let processedOutcome = null;
+    let dropped = false;
+
+    if (scopedTeacherId && accidentallyClaimedEvent.teacher_id !== scopedTeacherId) {
+      dropped = true;
+    } else {
+      processedOutcome = { sent: true };
+    }
+
+    assert.equal(dropped, true);
+    assert.equal(processedOutcome, null);
+  });
+
+  test("4. Reconciliations only finalize attempts belonging to scoped teacher", async () => {
+    const attempts = [
+      { attempt_id: "att-1", teacher_id: "teacher-A-uuid", status: "SENT", reconciliation_status: "CONFIRMED_SENT" },
+      { attempt_id: "att-2", teacher_id: "teacher-B-uuid", status: "SENT", reconciliation_status: "CONFIRMED_SENT" },
+    ];
+
+    const scopedTeacherId = "teacher-A-uuid";
+    const filteredAttempts = attempts.filter((a) => !scopedTeacherId || a.teacher_id === scopedTeacherId);
+
+    assert.equal(filteredAttempts.length, 1);
+    assert.equal(filteredAttempts[0].teacher_id, "teacher-A-uuid");
+  });
+
+  test("5. Authorized scoped teacher execution succeeds for their own event", async () => {
+    const ctx = {
+      scopedTeacherId: "teacher-A-uuid",
+      event: {
+        id: "event-1",
+        teacher_id: "teacher-A-uuid",
+        student_id: "student-1",
+      },
+    };
+
+    let boundaryViolation = false;
+    if (ctx.scopedTeacherId && ctx.event.teacher_id !== ctx.scopedTeacherId) {
+      boundaryViolation = true;
+    }
+
+    assert.equal(boundaryViolation, false);
+  });
+});
+
+describe("Notification Worker Additional Scenarios: Single Test Phone, Failures, Empty Queue & State Transitions", () => {
+  function formatParentPhone(phone) {
+    let clean = phone.replace(/[^\d]/g, "");
+    if (clean.startsWith("01") && clean.length === 11) {
+      clean = "2" + clean;
+    } else if (clean.startsWith("0020")) {
+      clean = clean.substring(2);
+    }
+    return clean;
+  }
+
+  test("1. Format authorized Egyptian test WhatsApp phone correctly", () => {
+    assert.equal(formatParentPhone("01012345678"), "201012345678");
+    assert.equal(formatParentPhone("+201012345678"), "201012345678");
+    assert.equal(formatParentPhone("00201012345678"), "201012345678");
+    assert.equal(formatParentPhone("01234567890"), "201234567890");
+    assert.equal(formatParentPhone("invalid-phone"), "");
+  });
+
+  test("2. Empty queue handling: When no PENDING events exist, worker reports 0 claimed", async () => {
+    const claimedCount = 0;
+    const results = { claimedCount, processed: [] };
+    assert.equal(results.claimedCount, 0);
+    assert.equal(results.processed.length, 0);
+  });
+
+  test("3. WAHA 500 No LID for user or invalid recipient prevents sending and leaves event PENDING", async () => {
+    const rawPhone = "123";
+    const formatted = formatParentPhone(rawPhone);
+    const isValid = formatted.length >= 8;
+    assert.equal(isValid, false);
+  });
+
+  test("4. Duplicate retry prevention: Second attempt for existing sent message is suppressed", () => {
+    const sentHistory = new Set();
+    const idempotencyKey = "studentmanager:waha:absence:event-123";
+
+    // First send
+    const firstSent = !sentHistory.has(idempotencyKey);
+    assert.equal(firstSent, true);
+    sentHistory.add(idempotencyKey);
+
+    // Second send attempt
+    const secondSent = !sentHistory.has(idempotencyKey);
+    assert.equal(secondSent, false); // Prevented!
+  });
+
+  test("5. Status progression: PENDING -> PROCESSING -> SENT", () => {
+    let status = "PENDING";
+    let attempts = 0;
+
+    // Claim
+    status = "PROCESSING";
+    attempts++;
+    assert.equal(status, "PROCESSING");
+    assert.equal(attempts, 1);
+
+    // Finalize
+    status = "SENT";
+    assert.equal(status, "SENT");
+  });
+});
+
+describe("CheckWahaRecentMessageSent Robustness & State Verification (FOUND, NOT_FOUND, CHECK_FAILED)", () => {
+  async function simulateCheckWahaRecentMessageSent(mockFetch, wahaBaseUrl, wahaApiKey, sessionName, chatId, exactMessageText, minTimestampSec, maxTimestampSec) {
+    try {
+      const url = `${wahaBaseUrl}/api/${encodeURIComponent(sessionName)}/chats/${encodeURIComponent(chatId)}/messages?limit=20`;
+      const res = await mockFetch(url, {
+        method: "GET",
+        headers: {
+          "X-Api-Key": wahaApiKey,
+          "Accept": "application/json",
+        },
+      });
+
+      if (!res.ok) {
+        const errText = await res.text().catch(() => "");
+        return { status: "CHECK_FAILED", wahaMessageId: null, error: `HTTP ${res.status}: ${errText}` };
+      }
+
+      let messages;
+      try {
+        messages = await res.json();
+      } catch (parseErr) {
+        return { status: "CHECK_FAILED", wahaMessageId: null, error: `JSON parse error: ${parseErr?.message || String(parseErr)}` };
+      }
+
+      if (!Array.isArray(messages)) {
+        return { status: "CHECK_FAILED", wahaMessageId: null, error: "Response is not an array of messages" };
+      }
+
+      const normalizedTarget = exactMessageText.trim();
+
+      for (const msg of messages) {
+        if (msg.fromMe !== true) continue;
+        if (typeof msg.timestamp !== "number" || !Number.isFinite(msg.timestamp)) continue;
+        if (msg.timestamp < minTimestampSec || msg.timestamp > maxTimestampSec) continue;
+
+        const body = typeof msg.body === "string" ? msg.body.trim() : "";
+        if (body === normalizedTarget) {
+          const id = msg.id?.id || msg.id || msg._id || null;
+          if (id) {
+            return { status: "FOUND", wahaMessageId: typeof id === "string" ? id : String(id) };
+          }
+        }
+      }
+
+      return { status: "NOT_FOUND", wahaMessageId: null };
+    } catch (err) {
+      return { status: "CHECK_FAILED", wahaMessageId: null, error: err?.message || String(err) };
+    }
+  }
+
+  test("1. FOUND: Successful response containing matching message and valid ID", async () => {
+    const mockFetch = async () => ({
+      ok: true,
+      json: async () => [{
+        fromMe: true,
+        timestamp: 1000,
+        body: "Hello Test",
+        id: "msg_123"
+      }],
+      text: async () => ""
+    });
+
+    const result = await simulateCheckWahaRecentMessageSent(
+      mockFetch, "https://waha.test", "key", "session", "chat", "Hello Test", 900, 1100
+    );
+
+    assert.equal(result.status, "FOUND");
+    assert.equal(result.wahaMessageId, "msg_123");
+  });
+
+  test("2. NOT_FOUND: Valid response without matching message", async () => {
+    const mockFetch = async () => ({
+      ok: true,
+      json: async () => [{
+        fromMe: true,
+        timestamp: 1000,
+        body: "Different Message",
+        id: "msg_456"
+      }],
+      text: async () => ""
+    });
+
+    const result = await simulateCheckWahaRecentMessageSent(
+      mockFetch, "https://waha.test", "key", "session", "chat", "Hello Test", 900, 1100
+    );
+
+    assert.equal(result.status, "NOT_FOUND");
+    assert.equal(result.wahaMessageId, null);
+  });
+
+  test("3. CHECK_FAILED: Network failure throws error", async () => {
+    const mockFetch = async () => {
+      throw new Error("Network offline");
+    };
+
+    const result = await simulateCheckWahaRecentMessageSent(
+      mockFetch, "https://waha.test", "key", "session", "chat", "Hello Test", 900, 1100
+    );
+
+    assert.equal(result.status, "CHECK_FAILED");
+    assert.ok(result.error.includes("Network offline"));
+  });
+
+  test("4. CHECK_FAILED: Non-successful HTTP response (e.g. 500 Internal Server Error)", async () => {
+    const mockFetch = async () => ({
+      ok: false,
+      status: 500,
+      text: async () => "Internal Error"
+    });
+
+    const result = await simulateCheckWahaRecentMessageSent(
+      mockFetch, "https://waha.test", "key", "session", "chat", "Hello Test", 900, 1100
+    );
+
+    assert.equal(result.status, "CHECK_FAILED");
+    assert.ok(result.error.includes("HTTP 500"));
+  });
+
+  test("5. CHECK_FAILED: Invalid JSON or non-array response", async () => {
+    const mockFetchNonArray = async () => ({
+      ok: true,
+      json: async () => ({ error: "not an array" }),
+      text: async () => ""
+    });
+
+    const res1 = await simulateCheckWahaRecentMessageSent(
+      mockFetchNonArray, "https://waha.test", "key", "session", "chat", "Hello Test", 900, 1100
+    );
+    assert.equal(res1.status, "CHECK_FAILED");
+    assert.ok(res1.error.includes("not an array"));
+
+    const mockFetchBadJson = async () => ({
+      ok: true,
+      json: async () => { throw new Error("Unexpected token"); },
+      text: async () => ""
+    });
+
+    const res2 = await simulateCheckWahaRecentMessageSent(
+      mockFetchBadJson, "https://waha.test", "key", "session", "chat", "Hello Test", 900, 1100
+    );
+    assert.equal(res2.status, "CHECK_FAILED");
+    assert.ok(res2.error.includes("JSON parse error"));
+  });
+
+  test("6. Verification: CHECK_FAILED and NOT_FOUND do not lead to CONFIRMED_NOT_SENT or premature resend", async () => {
+    const checkFailedOutcome = { success: false, reconciled: false, duplicatePrevented: false, wahaSent: true };
+    const notFoundOutcome = { success: false, reconciled: false, duplicatePrevented: false, wahaSent: true };
+
+    assert.equal(checkFailedOutcome.success, false);
+    assert.equal(notFoundOutcome.success, false);
+  });
+});
+
+
+

@@ -560,20 +560,34 @@ fun AddEditGroupDialog(
                                     Icon(imageVector = Icons.Default.ArrowDropDown, contentDescription = null)
                                 }
                             },
-                            modifier = Modifier.fillMaxWidth().clickable { isExpanded = true }.testTag("group_grade_select")
+                            modifier = Modifier.fillMaxWidth().testTag("group_grade_select")
+                        )
+                        // Transparent clickable overlay so tapping anywhere on the field opens the dropdown
+                        Box(
+                            modifier = Modifier
+                                .matchParentSize()
+                                .clickable { isExpanded = true }
                         )
                         DropdownMenu(
                             expanded = isExpanded,
                             onDismissRequest = { isExpanded = false }
                         ) {
-                            uiState.grades.forEach { grade ->
+                            if (uiState.grades.isEmpty()) {
                                 DropdownMenuItem(
-                                    text = { Text(grade.name) },
-                                    onClick = {
-                                        viewModel.onFormGradeChange(grade.id)
-                                        isExpanded = false
-                                    }
+                                    text = { Text("جاري تحميل الصفوف...") },
+                                    onClick = { isExpanded = false },
+                                    enabled = false
                                 )
+                            } else {
+                                uiState.grades.forEach { grade ->
+                                    DropdownMenuItem(
+                                        text = { Text(grade.name) },
+                                        onClick = {
+                                            viewModel.onFormGradeChange(grade.id)
+                                            isExpanded = false
+                                        }
+                                    )
+                                }
                             }
                         }
                     }

@@ -1,7 +1,9 @@
 package com.example.data.repository
 
+import com.example.core.model.BatchSyncStatus
 import com.example.core.model.Recitation
 import com.example.core.model.RecitationSummary
+import com.example.core.model.SyncResult
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -115,7 +117,7 @@ class MockRecitationRepository : RecitationRepository {
         score: Double,
         maxScore: Double,
         note: String?
-    ): Result<Recitation> {
+    ): Result<SyncResult<Recitation>> {
         if (title.isBlank()) {
             return Result.failure(IllegalArgumentException("اسم التسميع مطلوب"))
         }
@@ -143,7 +145,7 @@ class MockRecitationRepository : RecitationRepository {
         )
 
         _recitations.update { listOf(newRecitation) + it }
-        return Result.success(newRecitation)
+        return Result.success(SyncResult(newRecitation, BatchSyncStatus.SAVED_TO_CLOUD))
     }
 
     override suspend fun updateRecitation(recitation: Recitation): Result<Recitation> {

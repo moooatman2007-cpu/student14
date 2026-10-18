@@ -32,8 +32,13 @@ class SupabaseGradeRepository(
 ) : GradeRepository {
     private val client = SupabaseClientProvider.client
     private val _grades = MutableStateFlow<List<Grade>>(emptyList())
+    private var lastRefreshTimeMs = 0L
+    private var lastResolvedStage: String? = null
+    private val CACHE_TTL_MS = 60_000L
 
     fun clearCache() {
+        lastRefreshTimeMs = 0L
+        lastResolvedStage = null
         _grades.value = emptyList()
     }
 
@@ -50,6 +55,11 @@ class SupabaseGradeRepository(
     override suspend fun refreshGrades(stage: String?): List<Grade> = withContext(Dispatchers.IO) {
         val user = client.auth.currentUserOrNull()
         val teacherId = SupabaseClientProvider.mockTeacherId ?: user?.id ?: return@withContext emptyList()
+
+        val now = System.currentTimeMillis()
+        if (now - lastRefreshTimeMs < CACHE_TTL_MS && _grades.value.isNotEmpty() && (stage == null || stage == lastResolvedStage)) {
+            return@withContext _grades.value
+        }
 
         try {
             // Resolve teacher's educational stage
@@ -120,6 +130,8 @@ class SupabaseGradeRepository(
             }
             gradeDao?.upsertGrades(stageGrades.map { it.toEntity() })
 
+            lastRefreshTimeMs = now
+            lastResolvedStage = resolvedStage
             _grades.value = stageGrades
             stageGrades
         } catch (e: Exception) {

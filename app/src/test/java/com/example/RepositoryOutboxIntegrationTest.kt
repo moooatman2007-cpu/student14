@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import com.example.core.model.AttendanceStatus
+import com.example.core.model.BatchSyncStatus
 import com.example.core.model.InsertStudentRequest
 import com.example.core.model.Recitation
 import com.example.core.model.Student
@@ -81,8 +82,10 @@ class RepositoryOutboxIntegrationTest {
         )
 
         assertTrue(result.isSuccess)
-        val student = result.getOrNull()
+        val syncResult = result.getOrNull()
+        val student = syncResult?.data
         assertNotNull(student)
+        assertEquals(BatchSyncStatus.QUEUED_OFFLINE, syncResult?.syncStatus)
 
         // Verify Room write
         val cached = studentDao.getStudentByIdSync("teacher_x", student!!.studentId)
@@ -146,6 +149,8 @@ class RepositoryOutboxIntegrationTest {
 
         val result = studentRepository.deleteStudent("s_del")
         assertTrue(result.isSuccess)
+        val syncResult = result.getOrNull()
+        assertEquals(BatchSyncStatus.QUEUED_OFFLINE, syncResult?.syncStatus)
 
         val cached = studentDao.getStudentByIdSync("teacher_x", "s_del")
         assertEquals(null, cached)
@@ -198,7 +203,7 @@ class RepositoryOutboxIntegrationTest {
         val rec = result.getOrNull()
         assertNotNull(rec)
 
-        val cached = recitationDao.getRecitationByIdSync("teacher_x", rec!!.recitationId)
+        val cached = recitationDao.getRecitationByIdSync("teacher_x", rec!!.data.recitationId)
         assertNotNull(cached)
         assertEquals("Al-Baqarah", cached?.title)
 

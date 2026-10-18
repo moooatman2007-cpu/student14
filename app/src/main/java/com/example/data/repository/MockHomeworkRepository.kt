@@ -1,7 +1,9 @@
 package com.example.data.repository
 
+import com.example.core.model.BatchSyncStatus
 import com.example.core.model.Homework
 import com.example.core.model.HomeworkStatus
+import com.example.core.model.SyncResult
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -43,7 +45,7 @@ class MockHomeworkRepository(
         title: String,
         status: HomeworkStatus,
         note: String?
-    ): Result<Homework> {
+    ): Result<SyncResult<Homework>> {
         val hw = Homework(
             homeworkId = "hw_" + UUID.randomUUID().toString().take(8),
             studentId = studentId,
@@ -55,7 +57,7 @@ class MockHomeworkRepository(
             updatedAt = System.currentTimeMillis()
         )
         _homeworks.update { it + hw }
-        return Result.success(hw)
+        return Result.success(SyncResult(hw, BatchSyncStatus.SAVED_TO_CLOUD))
     }
 
     override suspend fun updateHomework(homework: Homework): Result<Homework> {

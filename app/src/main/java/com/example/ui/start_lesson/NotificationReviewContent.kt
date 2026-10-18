@@ -221,7 +221,7 @@ fun NotificationReviewContent(
                         horizontalArrangement = Arrangement.spacedBy(Dimens.Spacing8)
                     ) {
                         NotificationStatusChip(
-                            label = "جاهز للإرسال",
+                            label = "جاهز للتجهيز",
                             count = readyCount,
                             color = EmeraldGreen,
                             bgColor = EmeraldGreenLight,
@@ -329,7 +329,7 @@ fun NotificationReviewContent(
                         )
                         Spacer(modifier = Modifier.height(Dimens.Spacing8))
                         Text(
-                            text = "لا توجد إشعارات مطلوب إرسالها لهذه الحصة",
+                            text = "لا توجد إشعارات مطلوب تجهيزها لهذه الحصة",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -565,7 +565,7 @@ private fun StatusBadge(item: NotificationReviewItem) {
                             .background(EmeraldGreen)
                     )
                     Text(
-                        text = "جاهز للإرسال",
+                        text = "جاهز للتجهيز",
                         style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
                         color = EmeraldGreen
                     )

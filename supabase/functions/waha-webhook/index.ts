@@ -197,39 +197,66 @@ Deno.serve(async (req: Request) => {
   }
 
   try {
-    // 3. HMAC-SHA512 Webhook Verification
+    // 3. HMAC Webhook Verification (Supports SHA-256 & SHA-512, multiple signature headers)
     const webhookSecret = Deno.env.get("WAHA_WEBHOOK_SECRET");
     if (!webhookSecret || !webhookSecret.trim()) {
       console.error("WAHA_WEBHOOK_SECRET is not configured");
       return jsonResponse({ ok: false, error: "Unauthorized webhook configuration" }, 401);
     }
 
-    const hmacHeader = req.headers.get("X-Webhook-Hmac");
-    const algoHeader = req.headers.get("X-Webhook-Hmac-Algorithm");
+    const signatureHeader =
+      req.headers.get("X-Webhook-Hmac") ||
+      req.headers.get("X-Hub-Signature") ||
+      req.headers.get("X-WAHA-Signature");
 
-    if (!hmacHeader || !algoHeader || algoHeader.toLowerCase() !== "sha512") {
-      return jsonResponse({ ok: false, error: "Missing or invalid webhook security headers" }, 401);
+    if (!signatureHeader) {
+      console.warn("WAHA webhook rejected: missing signature header");
+      return jsonResponse({ ok: false, error: "Missing webhook signature" }, 401);
     }
 
+    const cleanSig = signatureHeader
+      .replace(/^sha256=/i, "")
+      .replace(/^sha512=/i, "")
+      .trim()
+      .toLowerCase();
+
     const rawBody = await req.text();
+    if (!rawBody) {
+      return jsonResponse({ ok: false, error: "Empty request body" }, 400);
+    }
 
     const enc = new TextEncoder();
     const keyData = enc.encode(webhookSecret.trim());
     const msgData = enc.encode(rawBody);
 
-    const cryptoKey = await crypto.subtle.importKey(
-      "raw",
-      keyData,
-      { name: "HMAC", hash: "SHA-512" },
-      false,
-      ["sign"]
-    );
+    let isValidSignature = false;
+    for (const hashAlg of ["SHA-256", "SHA-512"] as const) {
+      try {
+        const cryptoKey = await crypto.subtle.importKey(
+          "raw",
+          keyData,
+          { name: "HMAC", hash: hashAlg },
+          false,
+          ["sign"]
+        );
+        const signatureBuffer = await crypto.subtle.sign("HMAC", cryptoKey, msgData);
+        const signatureArray = Array.from(new Uint8Array(signatureBuffer));
+        const computedHex = signatureArray
+          .map((b) => b.toString(16).padStart(2, "0"))
+          .join("")
+          .toLowerCase();
 
-    const signatureBuffer = await crypto.subtle.sign("HMAC", cryptoKey, msgData);
-    const signatureArray = Array.from(new Uint8Array(signatureBuffer));
-    const computedHex = signatureArray.map((b) => b.toString(16).padStart(2, "0")).join("");
+        if (timingSafeEqual(computedHex, cleanSig)) {
+          isValidSignature = true;
+          break;
+        }
+      } catch {
+        // Try next algorithm
+      }
+    }
 
-    if (!timingSafeEqual(computedHex.toLowerCase(), hmacHeader.trim().toLowerCase())) {
+    if (!isValidSignature) {
+      console.warn("WAHA webhook rejected: invalid signature");
       return jsonResponse({ ok: false, error: "Invalid webhook signature" }, 401);
     }
 
@@ -241,15 +268,63 @@ Deno.serve(async (req: Request) => {
       return jsonResponse({ ok: false, error: "Invalid JSON payload" }, 400);
     }
 
-    // 5. Basic Event Validation (Only process message events)
+    // 5. Event Validation (Process message and session.status events)
     const event = body?.event;
-    if (event !== "message") {
+    if (event !== "message" && event !== "session.status") {
       return jsonResponse({
         ok: true,
         ignored: true,
-        reason: "Not a message event",
+        reason: "Unsupported event type",
         event: event ?? null,
       });
+    }
+
+    // If session.status event, handle session status update
+    if (event === "session.status") {
+      const sessionName =
+        (typeof body?.session === "string" && body.session.trim()) ||
+        (typeof body?.payload?.name === "string" && body.payload.name.trim()) ||
+        (typeof body?.payload?.session === "string" && body.payload.session.trim()) ||
+        "";
+
+      const rawStatus =
+        (typeof body?.payload?.status === "string" && body.payload.status.trim()) ||
+        (typeof body?.payload === "string" && body.payload.trim()) ||
+        (typeof body?.status === "string" && body.status.trim()) ||
+        "";
+
+      if (sessionName && rawStatus) {
+        const upperStatus = rawStatus.toUpperCase();
+        const { data: session } = await supabase
+          .from("teacher_whatsapp_sessions")
+          .select("teacher_id, session_name, status, connected_phone")
+          .eq("session_name", sessionName)
+          .maybeSingle();
+
+        let teacherId = session?.teacher_id || null;
+        if (!teacherId && sessionName.startsWith("teacher_")) {
+          const candidateId = sessionName.substring("teacher_".length).trim();
+          const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+          if (uuidRegex.test(candidateId)) {
+            teacherId = candidateId;
+          }
+        }
+
+        if (teacherId) {
+          const isWorking = upperStatus === "WORKING" || upperStatus === "CONNECTED";
+          const now = new Date().toISOString();
+          const normalizedStatus = isWorking ? "CONNECTED" : (upperStatus === "SCAN_QR_CODE" ? "SCAN_QR_CODE" : "DISCONNECTED");
+          await supabase.from("teacher_whatsapp_sessions").upsert({
+            teacher_id: teacherId,
+            session_name: sessionName,
+            status: normalizedStatus,
+            last_connected_at: isWorking ? now : null,
+            updated_at: now,
+          }, { onConflict: "teacher_id" });
+        }
+      }
+
+      return jsonResponse({ ok: true, processed: true, event: "session.status" });
     }
 
     const sessionName = body?.session;

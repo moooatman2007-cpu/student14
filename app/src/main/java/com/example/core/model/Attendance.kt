@@ -109,6 +109,11 @@ enum class BatchSyncStatus {
     FAILED
 }
 
+data class SyncResult<T>(
+    val data: T,
+    val syncStatus: BatchSyncStatus
+)
+
 data class BatchAttendanceResult(
     val total: Int = 0,
     val presentCount: Int = 0,

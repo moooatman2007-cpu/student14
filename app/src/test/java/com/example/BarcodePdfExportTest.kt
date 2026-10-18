@@ -85,10 +85,11 @@ class BarcodePdfExportTest {
         override fun getStudentsByGrade(gradeId: String): Flow<List<Student>> = _students.asStateFlow()
         override suspend fun getStudentById(studentId: String): Student? = null
         override suspend fun getStudentByCode(studentCode: String): Student? = null
-        override suspend fun addStudent(fullName: String, gradeId: String, parentPhone: String, hasWhatsApp: Boolean, alternativePhone: String?): Result<Student> =
+        override suspend fun addStudent(fullName: String, gradeId: String, parentPhone: String, hasWhatsApp: Boolean, alternativePhone: String?): Result<com.example.core.model.SyncResult<Student>> =
             Result.failure(Exception("Not implemented"))
         override suspend fun updateStudent(student: Student): Result<Student> = Result.failure(Exception("Not implemented"))
-        override suspend fun deleteStudent(studentId: String): Result<Unit> = Result.success(Unit)
+        override suspend fun deleteStudent(studentId: String): Result<com.example.core.model.SyncResult<Unit>> =
+            Result.success(com.example.core.model.SyncResult(Unit, com.example.core.model.BatchSyncStatus.SAVED_TO_CLOUD))
         override fun searchStudents(query: String, gradeId: String?): Flow<List<Student>> = _students.asStateFlow()
         override fun getStats(): Flow<TeacherStats> = MutableStateFlow(TeacherStats()).asStateFlow()
     }
@@ -231,5 +232,64 @@ class BarcodePdfExportTest {
         advanceUntilIdle()
 
         assertFalse(viewModel.uiState.value.isExporting)
+    }
+
+    @Test
+    fun testGenerateQRCodeBitmap_validStudentCode_returnsNonNullBitmap() {
+        val bitmap = BarcodeGenerator.generateQRCodeBitmap(
+            content = "ST-999",
+            size = 400
+        )
+        assertNotNull(bitmap)
+        assertEquals(400, bitmap?.width)
+        assertEquals(400, bitmap?.height)
+    }
+
+    @Test
+    fun testGenerateQRCodeBitmap_blankContent_returnsNullSafely() {
+        val bitmap = BarcodeGenerator.generateQRCodeBitmap("")
+        assertNull(bitmap)
+    }
+
+    @Test
+    fun testGenerateStudentQrCardBitmap_validStudent_createsValidCard() {
+        val student = Student(
+            studentId = "std_test_qr",
+            teacherId = "t1",
+            gradeId = "g1",
+            fullName = "مريم خالد",
+            studentCode = "ST-101"
+        )
+        val cardBitmap = BarcodeGenerator.generateStudentQrCardBitmap(
+            student = student,
+            gradeName = "الصف الأول الثانوي",
+            width = 800,
+            height = 1000
+        )
+        assertNotNull(cardBitmap)
+        assertEquals(800, cardBitmap.width)
+        assertEquals(1000, cardBitmap.height)
+    }
+
+    @Test
+    fun testSaveBitmapToGallery_returnsSuccessUri() {
+        val student = Student(
+            studentId = "std_test_save",
+            teacherId = "t1",
+            gradeId = "g1",
+            fullName = "سارة أحمد",
+            studentCode = "ST-202"
+        )
+        val cardBitmap = BarcodeGenerator.generateStudentQrCardBitmap(
+            student = student,
+            gradeName = "الصف الثاني الإعدادي"
+        )
+        val result = BarcodeGenerator.saveBitmapToGallery(
+            context = context,
+            bitmap = cardBitmap,
+            fileName = student.studentCode
+        )
+        assertTrue(result.isSuccess)
+        assertNotNull(result.getOrNull())
     }
 }

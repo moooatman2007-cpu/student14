@@ -32,14 +32,14 @@ class AttendanceNoGroupAndOutboxTest {
         // 1. Insert attendance for the first time (no group)
         val res1 = repo.recordOrUpdateAttendance(studentId, date, AttendanceStatus.PRESENT, "Note 1", null)
         assertTrue(res1.isSuccess)
-        val att1 = res1.getOrThrow()
+        val att1 = res1.getOrThrow().data
         assertEquals(AttendanceStatus.PRESENT, att1.status)
         assertEquals(null, att1.groupId)
 
         // 2. Same student + date -> UPDATE (PRESENT -> ABSENT), should remain 1 record
         val res2 = repo.recordOrUpdateAttendance(studentId, date, AttendanceStatus.ABSENT, "Note 2", null)
         assertTrue(res2.isSuccess)
-        val att2 = res2.getOrThrow()
+        val att2 = res2.getOrThrow().data
         assertEquals(AttendanceStatus.ABSENT, att2.status)
 
         // Verify total records for student/date in mock repo
@@ -60,17 +60,17 @@ class AttendanceNoGroupAndOutboxTest {
         // 1. Group A insert
         val r1 = repo.recordOrUpdateAttendance(studentId, date, AttendanceStatus.PRESENT, "Group A", groupA)
         assertTrue(r1.isSuccess)
-        assertEquals(groupA, r1.getOrThrow().groupId)
+        assertEquals(groupA, r1.getOrThrow().data.groupId)
 
         // 2. Group A update
         val r2 = repo.recordOrUpdateAttendance(studentId, date, AttendanceStatus.LATE, "Group A Updated", groupA)
         assertTrue(r2.isSuccess)
-        assertEquals(AttendanceStatus.LATE, r2.getOrThrow().status)
+        assertEquals(AttendanceStatus.LATE, r2.getOrThrow().data.status)
 
         // 3. Different group (Group B) -> allowed as separate record
         val r3 = repo.recordOrUpdateAttendance(studentId, date, AttendanceStatus.PRESENT, "Group B", groupB)
         assertTrue(r3.isSuccess)
-        assertEquals(groupB, r3.getOrThrow().groupId)
+        assertEquals(groupB, r3.getOrThrow().data.groupId)
     }
 
     @Test

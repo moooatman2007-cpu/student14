@@ -70,7 +70,11 @@ class GroupsViewModel(
         val tId = teacherId ?: return
         viewModelScope.launch {
             _uiState.update { it.copy(isRefreshing = true) }
-            groupRepository.refreshGroups(tId)
+            launch { groupRepository.refreshGroups(tId) }
+            launch {
+                val teacher = teacherRepository.fetchCurrentTeacher()
+                gradeRepository.refreshGrades(teacher?.educationalStage)
+            }
             _uiState.update { it.copy(isRefreshing = false) }
         }
     }
@@ -82,9 +86,12 @@ class GroupsViewModel(
             if (teacher != null) {
                 teacherId = teacher.id
 
-                // Sync remote groups on start
+                // Sync remote groups and grades on start
                 launch {
                     groupRepository.refreshGroups(teacher.id)
+                }
+                launch {
+                    gradeRepository.refreshGrades(teacher.educationalStage)
                 }
 
                 // Observe groups, students and group days
@@ -116,10 +123,21 @@ class GroupsViewModel(
             }
         }
 
-        // Get grades list
+        // Get grades list and ensure formGradeId defaults to the first available grade
         viewModelScope.launch {
             gradeRepository.getGrades().collectLatest { gradesList ->
-                _uiState.update { it.copy(grades = gradesList) }
+                _uiState.update { current ->
+                    val updatedFormGrade = if (current.formGradeId.isBlank() && gradesList.isNotEmpty()) {
+                        current.selectedGradeId ?: gradesList.first().id
+                    } else {
+                        current.formGradeId
+                    }
+                    current.copy(
+                        grades = gradesList,
+                        formGradeId = updatedFormGrade
+                    )
+                }
+                filterGroups()
             }
         }
     }
@@ -151,7 +169,10 @@ class GroupsViewModel(
     }
 
     fun openAddDialog() {
-        val defaultGrade = _uiState.value.selectedGradeId ?: _uiState.value.grades.firstOrNull()?.id ?: ""
+        val defaultGrade = _uiState.value.selectedGradeId 
+            ?: _uiState.value.formGradeId.ifBlank { null }
+            ?: _uiState.value.grades.firstOrNull()?.id 
+            ?: ""
         _uiState.update {
             it.copy(
                 showAddEditDialog = true,
@@ -295,14 +316,15 @@ class GroupsViewModel(
             return
         }
 
-        val tId = teacherId ?: run {
-            _uiState.update { it.copy(formError = "انتهت الجلسة، يرجى إعادة تسجيل الدخول") }
-            return
-        }
-
         _uiState.update { it.copy(isSaving = true, formError = null) }
 
         viewModelScope.launch {
+            val tId = teacherId ?: teacherRepository.fetchCurrentTeacher()?.also { teacherId = it.id }?.id
+            if (tId == null) {
+                _uiState.update { it.copy(isSaving = false, formError = "انتهت الجلسة، يرجى إعادة تسجيل الدخول") }
+                return@launch
+            }
+
             val capacityInt = state.formCapacity.toIntOrNull()?.takeIf { it > 0 }
             val locationStr = state.formLocation.trim().ifBlank { null }
             val id = state.editingGroup?.id ?: UUID.randomUUID().toString()

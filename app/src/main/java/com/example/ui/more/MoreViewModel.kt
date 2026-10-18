@@ -82,6 +82,7 @@ class MoreViewModel(
     val uiState: StateFlow<MoreUiState> = _uiState.asStateFlow()
 
     private var pollingJob: Job? = null
+    private var pairingJob: Job? = null
     // In-memory only reference to pairing code copied to clipboard (never logged/persisted)
     private var lastCopiedPairingCode: String? = null
 
@@ -128,7 +129,7 @@ class MoreViewModel(
     private suspend fun fetchWahaStatus() {
         try {
             val token = SupabaseClientProvider.client.auth.currentAccessTokenOrNull()
-            val jsonObject = JSONObject().apply { put("action", "START") }
+            val jsonObject = JSONObject().apply { put("action", "TEST_WAHA_CONNECTION") }
             val requestBody = jsonObject.toString().toRequestBody("application/json; charset=utf-8".toMediaTypeOrNull())
 
             val requestBuilder = Request.Builder()
@@ -143,15 +144,14 @@ class MoreViewModel(
             response.use { res ->
                 if (res.isSuccessful) {
                     val resJson = JSONObject(res.body?.string() ?: "")
-                    if (resJson.optBoolean("success", false)) {
-                        val status = resJson.optString("status", "")
-                        val connectedPhone = resJson.optString("connected_phone", "")
-                        _uiState.update {
-                            it.copy(
-                                wahaSessionStatus = status,
-                                wahaConnectedPhone = if (connectedPhone.isNotBlank() && connectedPhone != "null") connectedPhone else null
-                            )
-                        }
+                    val isConnected = resJson.optBoolean("whatsapp_connected", false)
+                    val status = resJson.optString("session_status", resJson.optString("status", ""))
+                    val connectedPhone = resJson.optString("connected_phone", "")
+                    _uiState.update {
+                        it.copy(
+                            wahaSessionStatus = if (isConnected && status.isBlank()) "CONNECTED" else status,
+                            wahaConnectedPhone = if (connectedPhone.isNotBlank() && connectedPhone != "null") connectedPhone else null
+                        )
                     }
                 }
             }
@@ -820,6 +820,10 @@ class MoreViewModel(
     }
 
     fun requestPairingCode() {
+        if (_uiState.value.isRequestingPairingCode || pairingJob?.isActive == true) {
+            return
+        }
+
         val phoneNumber = _uiState.value.pairingPhoneNumber
         if (phoneNumber.isBlank()) {
             _uiState.update { it.copy(pairingCodeError = "يرجى إدخال رقم الهاتف أولاً.") }
@@ -832,8 +836,9 @@ class MoreViewModel(
             return
         }
 
-        viewModelScope.launch {
-            _uiState.update { it.copy(isRequestingPairingCode = true, pairingCodeError = null, pairingCode = null) }
+        _uiState.update { it.copy(isRequestingPairingCode = true, pairingCodeError = null, pairingCode = null) }
+
+        pairingJob = viewModelScope.launch {
             try {
                 val token = SupabaseClientProvider.client.auth.currentAccessTokenOrNull()
 
@@ -857,25 +862,54 @@ class MoreViewModel(
                 }
 
                 response.use { res ->
+                    val responseStr = res.body?.string() ?: ""
+                    val resJson = try {
+                        if (responseStr.isNotBlank()) JSONObject(responseStr) else null
+                    } catch (_: Exception) {
+                        null
+                    }
+
                     if (!res.isSuccessful) {
                         val code = res.code
+                        val serverMsg = resJson?.optString("message")?.takeIf { it.isNotBlank() }
+                        val wahaResp = resJson?.optJSONObject("waha_response")
+                        val wahaArrayMsg = wahaResp?.optJSONArray("message")?.let { arr ->
+                            (0 until arr.length()).mapNotNull { arr.optString(it).takeIf { s -> s.isNotBlank() } }.joinToString(", ").takeIf { it.isNotBlank() }
+                        }
+                        val wahaExcMsg = wahaResp?.optJSONObject("exception")?.optString("message")?.takeIf { it.isNotBlank() }
+                        val wahaDetail = wahaResp?.optString("detail")?.takeIf { it.isNotBlank() }
+                        val wahaRawStr = if (wahaResp == null) resJson?.optString("waha_response")?.takeIf { it.isNotBlank() && it != "null" } else null
+
+                        val wahaMsg = wahaResp?.optString("message")?.takeIf { it.isNotBlank() }
+                            ?: wahaArrayMsg
+                            ?: wahaExcMsg
+                            ?: wahaDetail
+                            ?: wahaResp?.optString("error")?.takeIf { it.isNotBlank() }
+                            ?: wahaRawStr
+
+                        val errorDescription = when {
+                            !serverMsg.isNullOrBlank() -> serverMsg
+                            !wahaMsg.isNullOrBlank() -> "خادم واتساب: $wahaMsg"
+                            code == 401 -> "غير مصرح بالدخول. يرجى تسجيل الدخول مرة أخرى."
+                            code == 404 -> "خادم واتساب غير متوفر حالياً."
+                            code == 502 -> "تعذر التواصل مع خادم واتساب (502 Bad Gateway)."
+                            code == 503 -> "خادم واتساب قيد التهيئة حالياً. يرجى إعادة المحاولة."
+                            code == 504 -> "انتهت مهلة الاتصال بخادم واتساب."
+                            else -> "فشل طلب كود الربط. رمز الخطأ: $code"
+                        }
+
                         _uiState.update {
                             it.copy(
                                 isRequestingPairingCode = false,
-                                pairingCodeError = if (code == 401) "غير مصرح بالدخول. يرجى تسجيل الدخول مرة أخرى."
-                                               else if (code == 404) "خادم واتساب غير متوفر حالياً."
-                                               else "فشل طلب كود الربط. رمز الخطأ: $code"
+                                pairingCodeError = errorDescription
                             )
                         }
                         return@launch
                     }
 
-                    val responseStr = res.body?.string() ?: ""
-                    val resJson = JSONObject(responseStr)
-
-                    val success = resJson.optBoolean("success", false)
+                    val success = resJson?.optBoolean("success", false) ?: false
                     if (!success) {
-                        val msg = resJson.optString("message", "فشل جلب كود الربط")
+                        val msg = resJson?.optString("message")?.takeIf { it.isNotBlank() } ?: "فشل جلب كود الربط"
                         _uiState.update {
                             it.copy(
                                 isRequestingPairingCode = false,
@@ -885,16 +919,46 @@ class MoreViewModel(
                         return@launch
                     }
 
-                    var code = resJson.optString("code", "").trim()
+                    // Check if the session was already connected
+                    val alreadyConnected = resJson?.optBoolean("alreadyConnected", false) ?: false
+                    val status = resJson?.optString("status", "") ?: ""
+                    if (alreadyConnected || status == "CONNECTED" || status == "WORKING") {
+                        val connectedPhone = resJson?.optString("connected_phone")?.takeIf { it.isNotBlank() && it != "null" }
+                        stopWahaPolling()
+                        _uiState.update {
+                            it.copy(
+                                isRequestingPairingCode = false,
+                                pairingCode = null,
+                                wahaSessionStatus = "CONNECTED",
+                                wahaConnectedPhone = connectedPhone ?: it.wahaConnectedPhone,
+                                pairingCodeError = null
+                            )
+                        }
+                        return@launch
+                    }
+
+                    var code = resJson?.optString("code", "")?.trim() ?: ""
                     if (code.isEmpty()) {
-                        code = resJson.optJSONObject("data")?.optString("code", "")?.trim() ?: ""
+                        code = resJson?.optJSONObject("data")?.optString("code", "")?.trim() ?: ""
                     }
                     if (code.isEmpty()) {
-                        code = resJson.optJSONObject("waha_response")?.optString("code", "")?.trim() ?: ""
+                        code = resJson?.optJSONObject("waha_response")?.optString("code", "")?.trim() ?: ""
                     }
                     if (code.isEmpty()) {
-                        code = resJson.optString("pairingCode", "").trim()
+                        code = resJson?.optString("pairingCode", "")?.trim() ?: ""
                     }
+
+                    if (code.isBlank()) {
+                        _uiState.update {
+                            it.copy(
+                                isRequestingPairingCode = false,
+                                pairingCode = null,
+                                pairingCodeError = "لم يتم استلام كود ربط صالح من الخادم."
+                            )
+                        }
+                        return@launch
+                    }
+
                     lastCopiedPairingCode = code
                     _uiState.update {
                         it.copy(
@@ -927,6 +991,7 @@ class MoreViewModel(
 
     override fun onCleared() {
         super.onCleared()
+        pairingJob?.cancel()
         stopWahaPolling()
     }
 }

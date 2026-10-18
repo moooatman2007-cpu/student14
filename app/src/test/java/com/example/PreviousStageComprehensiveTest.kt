@@ -67,7 +67,7 @@ class PreviousStageComprehensiveTest {
             hasWhatsApp = true,
             alternativePhone = null
         )
-        val student = addResult.getOrThrow()
+        val student = addResult.getOrThrow().data
 
         val viewModel = StudentListViewModel(
             studentRepository = studentRepository,
@@ -104,7 +104,7 @@ class PreviousStageComprehensiveTest {
             hasWhatsApp = true,
             alternativePhone = null
         )
-        val student = addResult.getOrThrow()
+        val student = addResult.getOrThrow().data
 
         // 2. Teacher switches stage to Secondary (ثانوي)
         gradeRepository.setStage(EducationalStages.SECONDARY)
@@ -158,7 +158,7 @@ class PreviousStageComprehensiveTest {
             parentPhone = "01233445566",
             hasWhatsApp = true,
             alternativePhone = null
-        ).getOrThrow()
+        ).getOrThrow().data
 
         // 2. Switch to Secondary stage and create a secondary student
         gradeRepository.setStage(EducationalStages.SECONDARY)
@@ -170,7 +170,7 @@ class PreviousStageComprehensiveTest {
             parentPhone = "01511223344",
             hasWhatsApp = true,
             alternativePhone = null
-        ).getOrThrow()
+        ).getOrThrow().data
 
         val viewModel = StudentListViewModel(
             studentRepository = studentRepository,
@@ -269,11 +269,11 @@ class PreviousStageComprehensiveTest {
     fun testRequirementF_FastAttendancePreservesGradeIdAndScopeIsolation() = runTest {
         gradeRepository.setStage(EducationalStages.PREPARATORY)
         val prepGrade = gradeRepository.getGrades().first().first()
-        val prepStudent = studentRepository.addStudent("طالب إعدادي للحضور", prepGrade.id, "01011110001", true, null).getOrThrow()
+        val prepStudent = studentRepository.addStudent("طالب إعدادي للحضور", prepGrade.id, "01011110001", true, null).getOrThrow().data
 
         gradeRepository.setStage(EducationalStages.SECONDARY)
         val secGrade = gradeRepository.getGrades().first().first()
-        val secStudent = studentRepository.addStudent("طالب ثانوي للحضور", secGrade.id, "01011110002", true, null).getOrThrow()
+        val secStudent = studentRepository.addStudent("طالب ثانوي للحضور", secGrade.id, "01011110002", true, null).getOrThrow().data
 
         val fastAttendanceViewModel = FastAttendanceViewModel(
             studentRepository = studentRepository,

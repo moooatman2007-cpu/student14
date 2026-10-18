@@ -43,6 +43,9 @@ import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Fill
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalContext
+import android.content.Intent
+import android.net.Uri
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.SpanStyle
@@ -68,6 +71,8 @@ import com.example.data.auth.AuthFeedbackBus
 import com.example.data.auth.AuthFeedbackEvent
 import com.example.data.auth.SafeAuthErrorMapper
 import com.example.data.auth.SafeAuthLogger
+import com.example.data.repository.RepositoryProvider
+import com.example.data.repository.TeacherRepository
 import com.example.ui.components.MidarFullLogo
 import com.example.ui.theme.MidarBlue
 import com.example.ui.theme.MidarBlueLight
@@ -88,6 +93,7 @@ sealed interface AuthState {
     data object Loading : AuthState
     data object LoggedOut : AuthState
     data class LoggedIn(val userId: String, val email: String?) : AuthState
+    data class AccountRestricted(val status: String) : AuthState
 }
 
 data class PasswordRequirements(
@@ -111,6 +117,7 @@ fun checkPasswordRequirements(password: String): PasswordRequirements {
 }
 
 class AuthViewModel : ViewModel() {
+    private val teacherRepository: TeacherRepository = RepositoryProvider.teacherRepository
     private val _authState = MutableStateFlow<AuthState>(AuthState.Loading)
     val authState: StateFlow<AuthState> = _authState.asStateFlow()
 
@@ -152,7 +159,14 @@ class AuthViewModel : ViewModel() {
                 val session = SupabaseClientProvider.client.auth.currentSessionOrNull()
                 val user = SupabaseClientProvider.client.auth.currentUserOrNull()
                 if (session != null && user != null) {
-                    _authState.value = AuthState.LoggedIn(userId = user.id, email = user.email)
+                    AccountSessionManager.setActiveTeacherId(user.id)
+                    val teacher = teacherRepository.fetchCurrentTeacher()
+                    val status = teacher?.accountStatus ?: "pending"
+                    if (status == "active") {
+                        _authState.value = AuthState.LoggedIn(userId = user.id, email = user.email)
+                    } else {
+                        _authState.value = AuthState.AccountRestricted(status)
+                    }
                 } else {
                     _authState.value = AuthState.LoggedOut
                 }
@@ -195,7 +209,7 @@ class AuthViewModel : ViewModel() {
         }
     }
 
-    fun signIn(identifier: String, passwordInput: String, onResult: (Boolean) -> Unit) {
+    fun signIn(identifier: String, passwordInput: String, onResult: ((Boolean) -> Unit)? = null) {
         if (_isLoading.value) return
         _errorMessage.value = null
         _successMessage.value = null
@@ -211,26 +225,41 @@ class AuthViewModel : ViewModel() {
                         email = identifier.trim()
                         password = passwordInput
                     }
-                    checkSession()
-                    onResult(true)
                 } else {
                     try {
                         SupabaseClientProvider.client.auth.signInWith(Phone) {
                             phone = identifier.trim()
                             password = passwordInput
                         }
-                        checkSession()
-                        onResult(true)
                     } catch (e: Exception) {
                         SafeAuthLogger.logAuthError("AuthViewModel", "signInPhone", e)
                         _errorMessage.value = "تسجيل الدخول برقم الهاتف يتطلب تفعيل موفّر SMS في لوحة تحكم Supabase. يرجى استخدام البريد الإلكتروني."
-                        onResult(false)
+                        onResult?.invoke(false)
+                        return@launch
                     }
+                }
+
+                // Synchronously verify authenticated user session and teacher account_status
+                val user = SupabaseClientProvider.client.auth.currentUserOrNull()
+                if (user != null) {
+                    AccountSessionManager.setActiveTeacherId(user.id)
+                    val teacher = teacherRepository.fetchCurrentTeacher()
+                    val status = teacher?.accountStatus ?: "pending"
+                    if (status == "active") {
+                        _authState.value = AuthState.LoggedIn(userId = user.id, email = user.email)
+                        onResult?.invoke(true)
+                    } else {
+                        _authState.value = AuthState.AccountRestricted(status)
+                        onResult?.invoke(false)
+                    }
+                } else {
+                    _authState.value = AuthState.LoggedOut
+                    onResult?.invoke(false)
                 }
             } catch (e: Exception) {
                 SafeAuthLogger.logAuthError("AuthViewModel", "signIn", e)
                 _errorMessage.value = SafeAuthErrorMapper.getArabicErrorMessage(e, AuthActionContext.SIGN_IN)
-                onResult(false)
+                onResult?.invoke(false)
             } finally {
                 _isLoading.value = false
             }
@@ -288,7 +317,7 @@ class AuthViewModel : ViewModel() {
                     // Ignore
                 }
                 _authState.value = AuthState.LoggedOut
-                _successMessage.value = "تم إنشاء الحساب بنجاح، يرجى تسجيل الدخول باستخدام البريد الإلكتروني وكلمة المرور."
+                _successMessage.value = "تم إنشاء الحساب بنجاح، وحسابك الآن في انتظار تفعيل الإدارة."
                 onSignUpSuccess()
             } catch (e: Exception) {
                 SafeAuthLogger.logAuthError("AuthViewModel", "signUp", e)
@@ -329,7 +358,8 @@ enum class AuthMode { LOGIN, SIGNUP }
 @Composable
 fun AuthScreen(
     viewModel: AuthViewModel = androidx.lifecycle.viewmodel.compose.viewModel(),
-    onLoginSuccess: () -> Unit
+    onLoginSuccess: () -> Unit,
+    onAccountRestricted: (String) -> Unit
 ) {
     var authMode by rememberSaveable { mutableStateOf(AuthMode.LOGIN) }
 
@@ -351,10 +381,14 @@ fun AuthScreen(
     val authState by viewModel.authState.collectAsState()
 
     val focusManager = LocalFocusManager.current
+    val context = LocalContext.current
 
     LaunchedEffect(authState) {
-        if (authState is AuthState.LoggedIn) {
-            onLoginSuccess()
+        val currentAuthState = authState
+        when (currentAuthState) {
+            is AuthState.LoggedIn -> onLoginSuccess()
+            is AuthState.AccountRestricted -> onAccountRestricted(currentAuthState.status)
+            else -> {}
         }
     }
 
@@ -382,7 +416,19 @@ fun AuthScreen(
     }
 
     CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
-        if (authMode == AuthMode.LOGIN) {
+        if (authState is AuthState.Loading) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(MaterialTheme.colorScheme.background),
+                contentAlignment = Alignment.Center
+            ) {
+                CircularProgressIndicator(
+                    color = MidarBlue,
+                    modifier = Modifier.testTag("auth_loading_indicator")
+                )
+            }
+        } else if (authMode == AuthMode.LOGIN) {
             ExactLoginScreen(
                 identifier = emailOrIdentifier,
                 onIdentifierChange = { emailOrIdentifier = it },
@@ -394,9 +440,7 @@ fun AuthScreen(
                 isLoginValid = isLoginValid,
                 onLogin = {
                     focusManager.clearFocus()
-                    viewModel.signIn(emailOrIdentifier, password) { success ->
-                        if (success) onLoginSuccess()
-                    }
+                    viewModel.signIn(emailOrIdentifier, password)
                 },
                 onSwitchToSignup = {
                     authMode = AuthMode.SIGNUP
@@ -405,6 +449,12 @@ fun AuthScreen(
                 onForgotPassword = {
                     resetEmailInput = emailOrIdentifier
                     showResetDialog = true
+                },
+                onWhatsAppClick = {
+                    val intent = Intent(Intent.ACTION_VIEW).apply {
+                        data = Uri.parse("https://wa.me/201040129414?text=" + Uri.encode("السلام عليكم، أريد تفعيل حساب المدرس في تطبيق مدار."))
+                    }
+                    context.startActivity(intent)
                 }
             )
         } else {
@@ -508,7 +558,8 @@ private fun ExactLoginScreen(
     isLoginValid: Boolean,
     onLogin: () -> Unit,
     onSwitchToSignup: () -> Unit,
-    onForgotPassword: () -> Unit
+    onForgotPassword: () -> Unit,
+    onWhatsAppClick: () -> Unit
 ) {
     var isPasswordVisible by remember { mutableStateOf(false) }
 
@@ -782,6 +833,19 @@ private fun ExactLoginScreen(
                                 )
                             }
                         }
+                    }
+
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    // WhatsApp Activation Button
+                    OutlinedButton(
+                        onClick = onWhatsAppClick,
+                        modifier = Modifier.fillMaxWidth().height(48.dp),
+                        shape = RoundedCornerShape(16.dp),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF25D366).copy(alpha = 0.6f)),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF25D366))
+                    ) {
+                        Text("تواصل معنا لتفعيل الحساب", style = TextStyle(fontSize = 14.sp, fontWeight = FontWeight.Bold))
                     }
 
                     Spacer(modifier = Modifier.height(18.dp))
@@ -1152,14 +1216,22 @@ private fun ExactSignUpScreen(
                         isDark = true,
                         modifier = Modifier.testTag("signup_password_input")
                     )
-                    Text(
-                        text = "يجب أن تحتوي على 8 أحرف على الأقل",
-                        style = TextStyle(fontSize = 11.sp, color = Color(0xFF94A3B8)),
+
+                    // Interactive Password Requirements Checklist
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(top = 4.dp, end = 4.dp),
-                        textAlign = TextAlign.Start
-                    )
+                            .background(Color(0xFF0F1E3A).copy(alpha = 0.6f), RoundedCornerShape(12.dp))
+                            .padding(10.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        PasswordRequirementItem(text = "8 أحرف أو أرقام على الأقل", met = passwordReqs.hasMinLength)
+                        PasswordRequirementItem(text = "حرف إنجليزي كبير (A–Z)", met = passwordReqs.hasUppercase)
+                        PasswordRequirementItem(text = "حرف إنجليزي صغير (a–z)", met = passwordReqs.hasLowercase)
+                        PasswordRequirementItem(text = "رقم واحد على الأقل (0–9)", met = passwordReqs.hasDigit)
+                        PasswordRequirementItem(text = "رمز خاص واحد على الأقل", met = passwordReqs.hasSpecialChar)
+                    }
 
                     Spacer(modifier = Modifier.height(16.dp))
 
@@ -1186,71 +1258,62 @@ private fun ExactSignUpScreen(
                         modifier = Modifier.testTag("signup_confirm_password_input")
                     )
 
+                    if (confirmPassword.isNotEmpty()) {
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.fillMaxWidth().padding(start = 4.dp)
+                        ) {
+                            Icon(
+                                imageVector = if (isPasswordMatching) Icons.Default.CheckCircle else Icons.Outlined.ErrorOutline,
+                                contentDescription = null,
+                                tint = if (isPasswordMatching) Color(0xFF10B981) else Color(0xFFEF4444),
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = if (isPasswordMatching) "كلمتا المرور متطابقتان" else "كلمتا المرور غير متطابقتين",
+                                style = TextStyle(
+                                    fontSize = 11.sp,
+                                    color = if (isPasswordMatching) Color(0xFF10B981) else Color(0xFFEF4444)
+                                )
+                            )
+                        }
+                    }
+
                     Spacer(modifier = Modifier.height(16.dp))
 
-                    // 6. Educational Stage Dropdown (Selector)
+                    // 6. Educational Stage Cards Selector
                     ReferenceFieldLabel(label = "المرحلة التعليمية", icon = Icons.Outlined.School, isDark = true)
-                    Spacer(modifier = Modifier.height(6.dp))
-                    Box(modifier = Modifier.fillMaxWidth()) {
-                        Surface(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(52.dp)
-                                .clip(RoundedCornerShape(16.dp))
-                                .border(1.dp, Color(0xFF233B6E), RoundedCornerShape(16.dp))
-                                .clickable { expandedStageMenu = true },
-                            color = Color(0xFF0F1E3A).copy(alpha = 0.5f)
-                        ) {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .padding(horizontal = 16.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.SpaceBetween
-                            ) {
-                                Text(
-                                    text = if (educationalStage.isNotBlank()) educationalStage else "اختر المرحلة التعليمية",
-                                    style = TextStyle(
-                                        fontSize = 14.sp,
-                                        color = if (educationalStage.isNotBlank()) Color.White else Color(0xFF94A3B8)
-                                    )
-                                )
-                                Icon(
-                                    imageVector = Icons.Default.KeyboardArrowDown,
-                                    contentDescription = null,
-                                    tint = Color(0xFF94A3B8),
-                                    modifier = Modifier.size(22.dp)
-                                )
-                            }
-                        }
-
-                        DropdownMenu(
-                            expanded = expandedStageMenu,
-                            onDismissRequest = { expandedStageMenu = false },
-                            modifier = Modifier
-                                .fillMaxWidth(0.9f)
-                                .background(Color(0xFF0F1E3A))
-                        ) {
-                            stagesList.forEach { stage ->
-                                DropdownMenuItem(
-                                    text = {
-                                        Text(
-                                            text = stage,
-                                            style = TextStyle(
-                                                fontSize = 14.sp,
-                                                fontWeight = if (educationalStage == stage) FontWeight.Bold else FontWeight.Normal,
-                                                color = if (educationalStage == stage) Color(0xFF3B82F6) else Color.White
-                                            )
-                                        )
-                                    },
-                                    onClick = {
-                                        onEducationalStageChange(stage)
-                                        expandedStageMenu = false
-                                    },
-                                    modifier = Modifier.testTag("stage_option_$stage")
-                                )
-                            }
-                        }
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        com.example.ui.components.EducationalStageCard(
+                            stageName = "المرحلة الابتدائية",
+                            description = "الصف الأول حتى السادس الابتدائي",
+                            icon = Icons.Outlined.School,
+                            primaryColor = Color(0xFF3B82F6),
+                            isSelected = educationalStage == "ابتدائي",
+                            onClick = { onEducationalStageChange("ابتدائي") }
+                        )
+                        com.example.ui.components.EducationalStageCard(
+                            stageName = "المرحلة الإعدادية",
+                            description = "الصف الأول حتى الثالث الإعدادي",
+                            icon = Icons.Outlined.School,
+                            primaryColor = Color(0xFF10B981),
+                            isSelected = educationalStage == "إعدادي",
+                            onClick = { onEducationalStageChange("إعدادي") }
+                        )
+                        com.example.ui.components.EducationalStageCard(
+                            stageName = "المرحلة الثانوية",
+                            description = "الصف الأول حتى الثالث الثانوي",
+                            icon = Icons.Outlined.School,
+                            primaryColor = Color(0xFF8B5CF6),
+                            isSelected = educationalStage == "ثانوي",
+                            onClick = { onEducationalStageChange("ثانوي") }
+                        )
                     }
 
                     Spacer(modifier = Modifier.height(24.dp))
@@ -1435,6 +1498,31 @@ private fun MidarReferenceInputField(
                 trailingIcon()
             }
         }
+    }
+}
+
+@Composable
+private fun PasswordRequirementItem(text: String, met: Boolean) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.Start,
+        modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)
+    ) {
+        Icon(
+            imageVector = if (met) Icons.Default.CheckCircle else Icons.Outlined.CheckCircleOutline,
+            contentDescription = null,
+            tint = if (met) Color(0xFF10B981) else Color(0xFF64748B),
+            modifier = Modifier.size(14.dp)
+        )
+        Spacer(modifier = Modifier.width(8.dp))
+        Text(
+            text = text,
+            style = TextStyle(
+                fontSize = 11.sp,
+                color = if (met) Color(0xFF10B981) else Color(0xFF94A3B8),
+                fontWeight = if (met) FontWeight.Bold else FontWeight.Normal
+            )
+        )
     }
 }
 

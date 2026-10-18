@@ -36,8 +36,15 @@ class SupabasePaymentRepository(
             emit(emptyList())
             return@flow
         }
+
+        // 1. Emit local Room cache immediately to avoid blocking screens
+        val cached = paymentDao?.getPaymentsByMonthSync(teacherId, year, month) ?: emptyList()
+        if (cached.isNotEmpty()) {
+            emit(cached.map { it.toDomain() })
+        }
+
+        // 2. Fetch fresh data from network in background
         try {
-            // Network First
             val list = client.postgrest["lesson_payments"]
                 .select {
                     filter {
@@ -54,9 +61,10 @@ class SupabasePaymentRepository(
             }
             emit(list)
         } catch (e: Exception) {
-            if (BuildConfig.DEBUG) android.util.Log.e("SupabasePaymentRepo", "Network call failed, falling back to local cache for year=$year, month=$month: ${e.message}")
-            val cached = paymentDao?.getPaymentsByMonthSync(teacherId, year, month) ?: emptyList()
-            emit(cached.map { it.toDomain() })
+            if (BuildConfig.DEBUG) android.util.Log.e("SupabasePaymentRepo", "Network call failed: ${e.message}")
+            if (cached.isEmpty()) {
+                emit(emptyList())
+            }
         }
     }.flowOn(Dispatchers.IO)
 

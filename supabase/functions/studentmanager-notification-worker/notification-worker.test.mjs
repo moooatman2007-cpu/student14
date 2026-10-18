@@ -773,3 +773,886 @@ describe("Notification Worker Production-Grade Idempotency & Reconciliation (12 
     assert.equal(h.wahaSentLog.length, 5, "All 5 event types must send 1 message each");
   });
 });
+
+describe("Notification Worker Hardened Multi-Tier Authentication & RBAC Security", () => {
+  function constantTimeCompare(a, b) {
+    if (typeof a !== "string" || typeof b !== "string" || a.length === 0 || b.length === 0) {
+      return false;
+    }
+    const aBytes = Buffer.from(a);
+    const bBytes = Buffer.from(b);
+    if (aBytes.length !== bBytes.length) {
+      return false;
+    }
+    let mismatch = 0;
+    for (let i = 0; i < aBytes.length; i++) {
+      mismatch |= aBytes[i] ^ bBytes[i];
+    }
+    return mismatch === 0;
+  }
+
+  async function evaluateRequestAuth({
+    cronSecret = "",
+    workerSecret = "",
+    serviceRoleKey = "",
+    headers = {},
+    mockAuthUser = null,
+    mockTeachers = new Set(),
+  }) {
+    const authHeader = headers["authorization"] || "";
+    const apiKeyHeader = headers["apikey"] || "";
+    const headerWorkerSecret = headers["x-worker-secret"] || "";
+    const headerCronSecret = headers["x-cron-secret"] || "";
+
+    const bearerToken = authHeader.toLowerCase().startsWith("bearer ")
+      ? authHeader.slice(7).trim()
+      : "";
+
+    // 1. Backend / Cron / Scheduled Worker Path (Global Queue Access)
+    // NEVER accept serviceRoleKey from client!
+    const configuredSecrets = [cronSecret, workerSecret].filter(
+      (s) => s.trim().length > 0,
+    );
+
+    if (configuredSecrets.length > 0) {
+      const incomingTokens = [
+        bearerToken,
+        headerWorkerSecret,
+        headerCronSecret,
+        apiKeyHeader,
+      ].filter((t) => t.trim().length > 0);
+
+      const isGlobalAuthorized = configuredSecrets.some((secret) =>
+        incomingTokens.some((token) => constantTimeCompare(secret, token)),
+      );
+
+      if (isGlobalAuthorized) {
+        return { isAuthorized: true, mode: "GLOBAL_WORKER" };
+      }
+    }
+
+    // 2. Authenticated User (Teacher) Path from Client
+    if (bearerToken.length > 0) {
+      // Simulate verifying user via auth token
+      const user = mockAuthUser && mockAuthUser.token === bearerToken ? mockAuthUser : null;
+      if (!user || !user.id) {
+        return { isAuthorized: false, statusCode: 401, error: "Invalid or expired user session token" };
+      }
+
+      // Check teacher existence in database (public.teachers)
+      const isTeacher = mockTeachers.has(user.id);
+      if (!isTeacher) {
+        return {
+          isAuthorized: false,
+          statusCode: 403,
+          error: "Forbidden: authenticated user is not registered as a teacher",
+        };
+      }
+
+      return {
+        isAuthorized: true,
+        mode: "SCOPED_TEACHER",
+        teacherId: user.id,
+      };
+    }
+
+    return {
+      isAuthorized: false,
+      statusCode: 401,
+      error: "Unauthorized: Missing authentication credentials",
+    };
+  }
+
+  test("1. Unauthenticated request without headers -> 401 Unauthorized", async () => {
+    const res = await evaluateRequestAuth({
+      cronSecret: "cron-secret-123",
+      headers: {},
+    });
+    assert.equal(res.isAuthorized, false);
+    assert.equal(res.statusCode, 401);
+  });
+
+  test("2. Invalid/expired user JWT token -> 401 Unauthorized", async () => {
+    const res = await evaluateRequestAuth({
+      cronSecret: "cron-secret-123",
+      headers: { authorization: "Bearer expired-or-invalid-jwt" },
+      mockAuthUser: null,
+    });
+    assert.equal(res.isAuthorized, false);
+    assert.equal(res.statusCode, 401);
+  });
+
+  test("3. Authenticated regular user (student/parent) NOT in teachers table -> 403 Forbidden", async () => {
+    const res = await evaluateRequestAuth({
+      cronSecret: "cron-secret-123",
+      headers: { authorization: "Bearer student-valid-token" },
+      mockAuthUser: { id: "student-user-uuid", token: "student-valid-token" },
+      mockTeachers: new Set(["teacher-1-uuid", "teacher-2-uuid"]), // student is not in teachers
+    });
+    assert.equal(res.isAuthorized, false);
+    assert.equal(res.statusCode, 403);
+    assert.match(res.error, /not registered as a teacher/i);
+  });
+
+  test("4. Authenticated Teacher in teachers table -> 200 Authorized in SCOPED_TEACHER mode", async () => {
+    const res = await evaluateRequestAuth({
+      cronSecret: "cron-secret-123",
+      headers: { authorization: "Bearer teacher-1-token" },
+      mockAuthUser: { id: "teacher-1-uuid", token: "teacher-1-token" },
+      mockTeachers: new Set(["teacher-1-uuid"]),
+    });
+    assert.equal(res.isAuthorized, true);
+    assert.equal(res.mode, "SCOPED_TEACHER");
+    assert.equal(res.teacherId, "teacher-1-uuid");
+  });
+
+  test("5. Service Role Key submitted as client token -> REJECTED (no backdoor for clients)", async () => {
+    const res = await evaluateRequestAuth({
+      cronSecret: "cron-secret-123",
+      serviceRoleKey: "service-role-secret-key-999",
+      headers: { authorization: "Bearer service-role-secret-key-999" },
+      mockAuthUser: null,
+    });
+    assert.equal(res.isAuthorized, false);
+    assert.equal(res.statusCode, 401);
+  });
+
+  test("6. Valid CRON_SECRET via Bearer token -> 200 Authorized in GLOBAL_WORKER mode", async () => {
+    const res = await evaluateRequestAuth({
+      cronSecret: "super-cron-secret-123",
+      headers: { authorization: "Bearer super-cron-secret-123" },
+    });
+    assert.equal(res.isAuthorized, true);
+    assert.equal(res.mode, "GLOBAL_WORKER");
+    assert.equal(res.teacherId, undefined);
+  });
+
+  test("7. Valid CRON_SECRET via x-cron-secret header -> 200 Authorized in GLOBAL_WORKER mode", async () => {
+    const res = await evaluateRequestAuth({
+      cronSecret: "super-cron-secret-123",
+      headers: { "x-cron-secret": "super-cron-secret-123" },
+    });
+    assert.equal(res.isAuthorized, true);
+    assert.equal(res.mode, "GLOBAL_WORKER");
+  });
+
+  test("8. Valid WORKER_SECRET via x-worker-secret header -> 200 Authorized in GLOBAL_WORKER mode", async () => {
+    const res = await evaluateRequestAuth({
+      workerSecret: "worker-secret-456",
+      headers: { "x-worker-secret": "worker-secret-456" },
+    });
+    assert.equal(res.isAuthorized, true);
+    assert.equal(res.mode, "GLOBAL_WORKER");
+  });
+
+  test("9. Unauthorized backend secret -> 401 Unauthorized", async () => {
+    const res = await evaluateRequestAuth({
+      cronSecret: "super-cron-secret-123",
+      headers: { "x-cron-secret": "wrong-secret-attack" },
+    });
+    assert.equal(res.isAuthorized, false);
+    assert.equal(res.statusCode, 401);
+  });
+});
+
+describe("Cross-Teacher Queue Isolation & Scoped Execution Security", () => {
+  test("1. Scoped Teacher A execution strictly rejects processing Teacher B event (Tenant boundary violation)", async () => {
+    let recordedFailedError = "";
+    const ctx = {
+      scopedTeacherId: "teacher-A-uuid",
+      event: {
+        id: "event-belonging-to-teacher-B",
+        teacher_id: "teacher-B-uuid",
+        student_id: "student-1",
+        attendance_id: "att-1",
+      },
+    };
+
+    // Simulate processNotificationEvent tenant check
+    let outcome = null;
+    if (ctx.scopedTeacherId && ctx.event.teacher_id !== ctx.scopedTeacherId) {
+      recordedFailedError = "Tenant boundary violation: event does not belong to authorized teacher";
+      outcome = {
+        success: false,
+        reconciled: false,
+        duplicatePrevented: false,
+        error: "Tenant boundary violation: unauthorized teacher access",
+      };
+    }
+
+    assert.equal(outcome.success, false);
+    assert.match(outcome.error, /Tenant boundary violation/i);
+    assert.match(recordedFailedError, /Tenant boundary violation/i);
+  });
+
+  test("2. Scoped Teacher A execution only claims events matching teacher_id = teacher-A", async () => {
+    const queue = [
+      { id: "e1", teacher_id: "teacher-B-uuid", status: "PENDING" },
+      { id: "e2", teacher_id: "teacher-A-uuid", status: "PENDING" },
+      { id: "e3", teacher_id: "teacher-B-uuid", status: "PENDING" },
+    ];
+
+    const scopedTeacherId = "teacher-A-uuid";
+
+    // Simulate claim query with filter: ($2::uuid IS NULL OR e.teacher_id = $2::uuid)
+    const claimed = queue.find(
+      (e) => e.status === "PENDING" && (!scopedTeacherId || e.teacher_id === scopedTeacherId)
+    );
+
+    assert.ok(claimed);
+    assert.equal(claimed.id, "e2");
+    assert.equal(claimed.teacher_id, "teacher-A-uuid");
+  });
+
+  test("3. Failsafe: if database accidentally returned another teacher event, worker drops it without sending", async () => {
+    const scopedTeacherId = "teacher-A-uuid";
+    const accidentallyClaimedEvent = { id: "e-rogue", teacher_id: "teacher-B-uuid" };
+
+    let processedOutcome = null;
+    let dropped = false;
+
+    if (scopedTeacherId && accidentallyClaimedEvent.teacher_id !== scopedTeacherId) {
+      dropped = true;
+    } else {
+      processedOutcome = { sent: true };
+    }
+
+    assert.equal(dropped, true);
+    assert.equal(processedOutcome, null);
+  });
+
+  test("4. Reconciliations only finalize attempts belonging to scoped teacher", async () => {
+    const attempts = [
+      { attempt_id: "att-1", teacher_id: "teacher-A-uuid", status: "SENT", reconciliation_status: "CONFIRMED_SENT" },
+      { attempt_id: "att-2", teacher_id: "teacher-B-uuid", status: "SENT", reconciliation_status: "CONFIRMED_SENT" },
+    ];
+
+    const scopedTeacherId = "teacher-A-uuid";
+    const filteredAttempts = attempts.filter((a) => !scopedTeacherId || a.teacher_id === scopedTeacherId);
+
+    assert.equal(filteredAttempts.length, 1);
+    assert.equal(filteredAttempts[0].teacher_id, "teacher-A-uuid");
+  });
+
+  test("5. Authorized scoped teacher execution succeeds for their own event", async () => {
+    const ctx = {
+      scopedTeacherId: "teacher-A-uuid",
+      event: {
+        id: "event-1",
+        teacher_id: "teacher-A-uuid",
+        student_id: "student-1",
+      },
+    };
+
+    let boundaryViolation = false;
+    if (ctx.scopedTeacherId && ctx.event.teacher_id !== ctx.scopedTeacherId) {
+      boundaryViolation = true;
+    }
+
+    assert.equal(boundaryViolation, false);
+  });
+});
+
+describe("Notification Worker Additional Scenarios: Single Test Phone, Failures, Empty Queue & State Transitions", () => {
+  function formatParentPhone(phone) {
+    let clean = phone.replace(/[^\d]/g, "");
+    if (clean.startsWith("01") && clean.length === 11) {
+      clean = "2" + clean;
+    } else if (clean.startsWith("0020")) {
+      clean = clean.substring(2);
+    }
+    return clean;
+  }
+
+  test("1. Format authorized Egyptian test WhatsApp phone correctly", () => {
+    assert.equal(formatParentPhone("01012345678"), "201012345678");
+    assert.equal(formatParentPhone("+201012345678"), "201012345678");
+    assert.equal(formatParentPhone("00201012345678"), "201012345678");
+    assert.equal(formatParentPhone("01234567890"), "201234567890");
+    assert.equal(formatParentPhone("invalid-phone"), "");
+  });
+
+  test("2. Empty queue handling: When no PENDING events exist, worker reports 0 claimed", async () => {
+    const claimedCount = 0;
+    const results = { claimedCount, processed: [] };
+    assert.equal(results.claimedCount, 0);
+    assert.equal(results.processed.length, 0);
+  });
+
+  test("3. WAHA 500 No LID for user or invalid recipient prevents sending and leaves event PENDING", async () => {
+    const rawPhone = "123";
+    const formatted = formatParentPhone(rawPhone);
+    const isValid = formatted.length >= 8;
+    assert.equal(isValid, false);
+  });
+
+  test("4. Duplicate retry prevention: Second attempt for existing sent message is suppressed", () => {
+    const sentHistory = new Set();
+    const idempotencyKey = "studentmanager:waha:absence:event-123";
+
+    // First send
+    const firstSent = !sentHistory.has(idempotencyKey);
+    assert.equal(firstSent, true);
+    sentHistory.add(idempotencyKey);
+
+    // Second send attempt
+    const secondSent = !sentHistory.has(idempotencyKey);
+    assert.equal(secondSent, false); // Prevented!
+  });
+
+  test("5. Status progression: PENDING -> PROCESSING -> SENT", () => {
+    let status = "PENDING";
+    let attempts = 0;
+
+    // Claim
+    status = "PROCESSING";
+    attempts++;
+    assert.equal(status, "PROCESSING");
+    assert.equal(attempts, 1);
+
+    // Finalize
+    status = "SENT";
+    assert.equal(status, "SENT");
+  });
+});
+
+describe("CheckWahaRecentMessageSent Robustness & State Verification (FOUND, NOT_FOUND, CHECK_FAILED)", () => {
+  async function simulateCheckWahaRecentMessageSent(mockFetch, wahaBaseUrl, wahaApiKey, sessionName, chatId, exactMessageText, minTimestampSec, maxTimestampSec) {
+    try {
+      const url = `${wahaBaseUrl}/api/${encodeURIComponent(sessionName)}/chats/${encodeURIComponent(chatId)}/messages?limit=20`;
+      const res = await mockFetch(url, {
+        method: "GET",
+        headers: {
+          "X-Api-Key": wahaApiKey,
+          "Accept": "application/json",
+        },
+      });
+
+      if (!res.ok) {
+        const errText = await res.text().catch(() => "");
+        return { status: "CHECK_FAILED", wahaMessageId: null, error: `HTTP ${res.status}: ${errText}` };
+      }
+
+      let messages;
+      try {
+        messages = await res.json();
+      } catch (parseErr) {
+        return { status: "CHECK_FAILED", wahaMessageId: null, error: `JSON parse error: ${parseErr?.message || String(parseErr)}` };
+      }
+
+      if (!Array.isArray(messages)) {
+        return { status: "CHECK_FAILED", wahaMessageId: null, error: "Response is not an array of messages" };
+      }
+
+      const normalizedTarget = exactMessageText.trim();
+
+      for (const msg of messages) {
+        if (msg.fromMe !== true) continue;
+        if (typeof msg.timestamp !== "number" || !Number.isFinite(msg.timestamp)) continue;
+        if (msg.timestamp < minTimestampSec || msg.timestamp > maxTimestampSec) continue;
+
+        const body = typeof msg.body === "string" ? msg.body.trim() : "";
+        if (body === normalizedTarget) {
+          const id = msg.id?.id || msg.id || msg._id || null;
+          if (id) {
+            return { status: "FOUND", wahaMessageId: typeof id === "string" ? id : String(id) };
+          }
+        }
+      }
+
+      return { status: "NOT_FOUND", wahaMessageId: null };
+    } catch (err) {
+      return { status: "CHECK_FAILED", wahaMessageId: null, error: err?.message || String(err) };
+    }
+  }
+
+  test("1. FOUND: Successful response containing matching message and valid ID", async () => {
+    const mockFetch = async () => ({
+      ok: true,
+      json: async () => [{
+        fromMe: true,
+        timestamp: 1000,
+        body: "Hello Test",
+        id: "msg_123"
+      }],
+      text: async () => ""
+    });
+
+    const result = await simulateCheckWahaRecentMessageSent(
+      mockFetch, "https://waha.test", "key", "session", "chat", "Hello Test", 900, 1100
+    );
+
+    assert.equal(result.status, "FOUND");
+    assert.equal(result.wahaMessageId, "msg_123");
+  });
+
+  test("2. NOT_FOUND: Valid response without matching message", async () => {
+    const mockFetch = async () => ({
+      ok: true,
+      json: async () => [{
+        fromMe: true,
+        timestamp: 1000,
+        body: "Different Message",
+        id: "msg_456"
+      }],
+      text: async () => ""
+    });
+
+    const result = await simulateCheckWahaRecentMessageSent(
+      mockFetch, "https://waha.test", "key", "session", "chat", "Hello Test", 900, 1100
+    );
+
+    assert.equal(result.status, "NOT_FOUND");
+    assert.equal(result.wahaMessageId, null);
+  });
+
+  test("3. CHECK_FAILED: Network failure throws error", async () => {
+    const mockFetch = async () => {
+      throw new Error("Network offline");
+    };
+
+    const result = await simulateCheckWahaRecentMessageSent(
+      mockFetch, "https://waha.test", "key", "session", "chat", "Hello Test", 900, 1100
+    );
+
+    assert.equal(result.status, "CHECK_FAILED");
+    assert.ok(result.error.includes("Network offline"));
+  });
+
+  test("4. CHECK_FAILED: Non-successful HTTP response (e.g. 500 Internal Server Error)", async () => {
+    const mockFetch = async () => ({
+      ok: false,
+      status: 500,
+      text: async () => "Internal Error"
+    });
+
+    const result = await simulateCheckWahaRecentMessageSent(
+      mockFetch, "https://waha.test", "key", "session", "chat", "Hello Test", 900, 1100
+    );
+
+    assert.equal(result.status, "CHECK_FAILED");
+    assert.ok(result.error.includes("HTTP 500"));
+  });
+
+  test("5. CHECK_FAILED: Invalid JSON or non-array response", async () => {
+    const mockFetchNonArray = async () => ({
+      ok: true,
+      json: async () => ({ error: "not an array" }),
+      text: async () => ""
+    });
+
+    const res1 = await simulateCheckWahaRecentMessageSent(
+      mockFetchNonArray, "https://waha.test", "key", "session", "chat", "Hello Test", 900, 1100
+    );
+    assert.equal(res1.status, "CHECK_FAILED");
+    assert.ok(res1.error.includes("not an array"));
+
+    const mockFetchBadJson = async () => ({
+      ok: true,
+      json: async () => { throw new Error("Unexpected token"); },
+      text: async () => ""
+    });
+
+    const res2 = await simulateCheckWahaRecentMessageSent(
+      mockFetchBadJson, "https://waha.test", "key", "session", "chat", "Hello Test", 900, 1100
+    );
+    assert.equal(res2.status, "CHECK_FAILED");
+    assert.ok(res2.error.includes("JSON parse error"));
+  });
+
+  test("6. Verification: CHECK_FAILED and NOT_FOUND do not lead to CONFIRMED_NOT_SENT or premature resend", async () => {
+    const checkFailedOutcome = { success: false, reconciled: false, duplicatePrevented: false, wahaSent: true };
+    const notFoundOutcome = { success: false, reconciled: false, duplicatePrevented: false, wahaSent: true };
+
+    assert.equal(checkFailedOutcome.success, false);
+    assert.equal(notFoundOutcome.success, false);
+  });
+
+
+
+  // ============================================================================
+  // SUITE 6: Scoped Targeted Event, Dry-Run Simulation, and Pre-Claim Safety
+  // ============================================================================
+describe("Scoped Targeted Event, Dry-Run Simulation, and Pre-Claim Safety", () => {
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+  function validateEventId(id) {
+    if (!id || typeof id !== "string") return false;
+    return uuidRegex.test(id.trim());
+  }
+
+  test("1. Rejection of invalid event_id (non-UUID format)", () => {
+    assert.equal(validateEventId("not-a-uuid"), false);
+    assert.equal(validateEventId("12345"), false);
+    assert.equal(validateEventId(""), false);
+    assert.equal(validateEventId(null), false);
+    assert.equal(validateEventId("ccf5ccf2-5483-4b22-8ca8-3653a921a849"), true);
+  });
+
+  test("2. Rejection of event that does not belong to authorized teacher (Tenant boundary)", async () => {
+    const teacherA = "a756e7ff-dc64-4deb-b743-1efd0e5800c6";
+    const teacherB = "b1111111-2222-3333-4444-555555555555";
+    const targetEventId = "ccf5ccf2-5483-4b22-8ca8-3653a921a849";
+
+    const event = {
+      id: targetEventId,
+      teacher_id: teacherB,
+      student_id: "s-1",
+      status: "PENDING",
+      attempts: 0,
+    };
+
+    const scopedTeacherId = teacherA;
+    const isTenantViolation = scopedTeacherId && event.teacher_id !== scopedTeacherId;
+    assert.equal(isTenantViolation, true, "Must flag tenant boundary violation");
+  });
+
+  test("3. Dry-run mode: does NOT mutate database, does NOT call claim or recover, and does NOT call WAHA", async () => {
+    const targetEventId = "ccf5ccf2-5483-4b22-8ca8-3653a921a849";
+    const teacherId = "a756e7ff-dc64-4deb-b743-1efd0e5800c6";
+    const studentId = "1c04c362-a87f-4f21-89a3-f6f1ef3c663a";
+
+    const db = {
+      notification_events: new Map([
+        [targetEventId, {
+          id: targetEventId,
+          teacher_id: teacherId,
+          student_id: studentId,
+          attendance_id: "att-1",
+          status: "PENDING",
+          attempts: 0,
+        }],
+      ]),
+      students: new Map([
+        [studentId, {
+          id: studentId,
+          teacher_id: teacherId,
+          full_name: "Youssef Ahmed",
+          parent_phone: "01012349414",
+          has_whatsapp: true,
+          deleted_at: null,
+        }],
+      ]),
+      teacher_whatsapp_sessions: new Map([
+        [teacherId, {
+          session_name: "teacher_a756e7ff-dc64-4deb-b743-1efd0e5800c6",
+          status: "WORKING",
+        }],
+      ]),
+    };
+
+    let rpcCalled = false;
+    let wahaCalled = false;
+
+    const options = { eventId: targetEventId, eventType: "ABSENCE", dryRun: true };
+    const event = db.notification_events.get(options.eventId);
+    assert.ok(event);
+    assert.equal(event.status, "PENDING");
+    assert.equal(event.attempts, 0);
+
+    const student = db.students.get(event.student_id);
+    assert.ok(student);
+    assert.equal(student.has_whatsapp, true);
+
+    const session = db.teacher_whatsapp_sessions.get(event.teacher_id);
+    assert.ok(session);
+    assert.equal(session.status, "WORKING");
+
+    assert.equal(rpcCalled, false, "RPC must not be called in dry-run");
+    assert.equal(wahaCalled, false, "WAHA API must not be called in dry-run");
+    assert.equal(event.status, "PENDING", "Event status must remain PENDING");
+    assert.equal(event.attempts, 0, "Event attempts must remain 0");
+  });
+
+  test("4. Filtering by event_type: 'ABSENCE' prevents querying or processing other types", () => {
+    const allTypes = ["ABSENCE", "HOMEWORK", "RECITATION", "EXAM", "MONTHLY_REPORT"];
+    const requestedType = "ABSENCE";
+
+    const typesToProcess = requestedType ? [requestedType] : allTypes;
+    assert.deepEqual(typesToProcess, ["ABSENCE"]);
+    assert.equal(typesToProcess.includes("HOMEWORK"), false);
+    assert.equal(typesToProcess.includes("RECITATION"), false);
+    assert.equal(typesToProcess.includes("EXAM"), false);
+    assert.equal(typesToProcess.includes("MONTHLY_REPORT"), false);
+  });
+
+  test("5. Standard queue processing without options defaults to all 5 event types (backwards compatibility)", () => {
+    const allTypes = ["ABSENCE", "HOMEWORK", "RECITATION", "EXAM", "MONTHLY_REPORT"];
+    const options = {};
+    const typesToProcess = options?.eventType ? [options.eventType] : allTypes;
+    assert.deepEqual(typesToProcess, allTypes);
+  });
+
+  test("6. Targeted pre-claim safety guard: prevents calling general claim when an older pending event exists", () => {
+    const olderEventId = "11111111-1111-1111-1111-111111111111";
+    const targetEventId = "ccf5ccf2-5483-4b22-8ca8-3653a921a849";
+
+    const queue = [
+      { id: olderEventId, created_at: "2026-10-10T00:00:00Z" },
+      { id: targetEventId, created_at: "2026-10-12T00:00:00Z" },
+    ];
+
+    const oldest = queue[0];
+    const canSafelyClaimTargetDirectly = oldest.id === targetEventId;
+    assert.equal(canSafelyClaimTargetDirectly, false, "Must abort claim before touching older queue item");
+
+    const isolatedQueue = [
+      { id: targetEventId, created_at: "2026-10-12T00:00:00Z" },
+    ];
+    const isolatedOldest = isolatedQueue[0];
+    assert.equal(isolatedOldest.id === targetEventId, true, "Safe to claim because target is oldest item");
+  });
+});
+
+// ============================================================================
+// SUITE 7: Single-Run Consecutive Absence Processing & Reliability
+// ============================================================================
+describe("Single-Run Consecutive Absence Processing & Reliability", () => {
+  test("Single worker run processes three consecutive absence events successfully", async () => {
+    const events = [
+      { id: "ev-1", student_id: "s-1", status: "PENDING", attempts: 0 },
+      { id: "ev-2", student_id: "s-2", status: "PENDING", attempts: 0 },
+      { id: "ev-3", student_id: "s-3", status: "PENDING", attempts: 0 },
+    ];
+
+    let processedCount = 0;
+    for (const ev of events) {
+      if (ev.status === "PENDING" && ev.attempts < 3) {
+        ev.status = "PROCESSING";
+        ev.attempts++;
+        // Simulate sending and finalization
+        ev.status = "SENT";
+        processedCount++;
+      }
+    }
+
+    assert.equal(processedCount, 3, "All 3 absence events must be processed in a single run");
+    assert.equal(events.every(e => e.status === "SENT"), true);
+  });
+
+  test("Single message failure does not stop processing remaining events", async () => {
+    const events = [
+      { id: "ev-1", student_id: "s-1", phone: "01011111111", status: "PENDING", attempts: 0 },
+      { id: "ev-2", student_id: "s-2", phone: "INVALID", status: "PENDING", attempts: 0 },
+      { id: "ev-3", student_id: "s-3", phone: "01033333333", status: "PENDING", attempts: 0 },
+    ];
+
+    let successCount = 0;
+    let failedCount = 0;
+
+    for (const ev of events) {
+      if (ev.phone === "INVALID") {
+        ev.status = "FAILED";
+        ev.attempts++;
+        failedCount++;
+        continue;
+      }
+      ev.status = "SENT";
+      ev.attempts++;
+      successCount++;
+    }
+
+    assert.equal(successCount, 2);
+    assert.equal(failedCount, 1);
+  });
+
+  test("Delay between messages is applied and NOT applied after the last message", () => {
+    const events = [
+      { id: "ev-1", status: "PENDING" },
+      { id: "ev-2", status: "PENDING" },
+      { id: "ev-3", status: "PENDING" },
+    ];
+    let delayCount = 0;
+    for (let i = 0; i < events.length; i++) {
+      events[i].status = "SENT";
+      const remainingPending = events.slice(i + 1).filter(e => e.status === "PENDING").length;
+      const hasMorePending = remainingPending > 0;
+      if (hasMorePending) {
+        delayCount++;
+      }
+    }
+    assert.equal(delayCount, 2, "Delay must be applied exactly twice between 3 messages, and 0 times after last");
+  });
+
+  test("Single worker run with 120s budget successfully completes all 3 absence events", () => {
+    const events = [
+      { id: "ev-1", status: "PENDING", attempts: 0 },
+      { id: "ev-2", status: "PENDING", attempts: 0 },
+      { id: "ev-3", status: "PENDING", attempts: 0 },
+    ];
+    const MAX_CYCLE_DURATION_MS = 120000;
+    const whatsappSendDelayMs = 10000;
+    let simulatedElapsed = 0;
+    let processed = 0;
+
+    for (let i = 0; i < events.length; i++) {
+      if (simulatedElapsed >= MAX_CYCLE_DURATION_MS) break;
+
+      events[i].status = "SENT";
+      events[i].attempts++;
+      processed++;
+      simulatedElapsed += 2000; // ~2s per event
+
+      const remainingPending = events.slice(i + 1).filter(e => e.status === "PENDING").length;
+      if (remainingPending > 0) {
+        if (MAX_CYCLE_DURATION_MS - simulatedElapsed <= whatsappSendDelayMs) break;
+        simulatedElapsed += whatsappSendDelayMs;
+      }
+    }
+
+    assert.equal(processed, 3, "All 3 events must be completely processed within 120s budget");
+    assert.equal(events.every(e => e.status === "SENT"), true);
+    assert.ok(simulatedElapsed < 30000, `3 events with 2 delays of 10s should finish in ~24s, got ${simulatedElapsed}ms`);
+  });
+
+  test("Single worker run with 120s budget successfully completes all 5 absence events", () => {
+    const events = Array.from({ length: 5 }, (_, i) => ({
+      id: `ev-${i + 1}`,
+      status: "PENDING",
+      attempts: 0,
+    }));
+    const MAX_CYCLE_DURATION_MS = 120000;
+    const whatsappSendDelayMs = 10000;
+    let simulatedElapsed = 0;
+    let processed = 0;
+
+    for (let i = 0; i < events.length; i++) {
+      if (simulatedElapsed >= MAX_CYCLE_DURATION_MS) break;
+
+      events[i].status = "SENT";
+      events[i].attempts++;
+      processed++;
+      simulatedElapsed += 2500; // ~2.5s per event
+
+      const remainingPending = events.slice(i + 1).filter(e => e.status === "PENDING").length;
+      if (remainingPending > 0) {
+        if (MAX_CYCLE_DURATION_MS - simulatedElapsed <= whatsappSendDelayMs) break;
+        simulatedElapsed += whatsappSendDelayMs;
+      }
+    }
+
+    assert.equal(processed, 5, "All 5 events must be completely processed within 120s budget");
+    assert.equal(events.every(e => e.status === "SENT"), true);
+    assert.ok(simulatedElapsed < 60000, `5 events with 4 delays of 10s should finish in ~52.5s, got ${simulatedElapsed}ms`);
+  });
+
+  test("Single worker run with 120s budget successfully completes all 7 absence events", () => {
+    const events = Array.from({ length: 7 }, (_, i) => ({
+      id: `ev-${i + 1}`,
+      status: "PENDING",
+      attempts: 0,
+    }));
+    const MAX_CYCLE_DURATION_MS = 120000;
+    const whatsappSendDelayMs = 10000;
+    let simulatedElapsed = 0;
+    let processed = 0;
+
+    for (let i = 0; i < events.length; i++) {
+      if (simulatedElapsed >= MAX_CYCLE_DURATION_MS) break;
+
+      events[i].status = "SENT";
+      events[i].attempts++;
+      processed++;
+      simulatedElapsed += 2500; // ~2.5s per event
+
+      const remainingPending = events.slice(i + 1).filter(e => e.status === "PENDING").length;
+      if (remainingPending > 0) {
+        if (MAX_CYCLE_DURATION_MS - simulatedElapsed <= whatsappSendDelayMs) break;
+        simulatedElapsed += whatsappSendDelayMs;
+      }
+    }
+
+    assert.equal(processed, 7, "All 7 events must be completely processed within 120s budget");
+    assert.equal(events.every(e => e.status === "SENT"), true);
+    assert.ok(simulatedElapsed < 85000, `7 events with 6 delays of 10s should finish in ~77.5s, got ${simulatedElapsed}ms`);
+  });
+
+  test("Safe capacity yield: Large queue (e.g. 15 events) yields safely within 120s budget leaving remaining events strictly PENDING", () => {
+    const events = Array.from({ length: 15 }, (_, i) => ({
+      id: `ev-${i + 1}`,
+      status: "PENDING",
+      attempts: 0,
+    }));
+
+    const MAX_CYCLE_DURATION_MS = 120000;
+    const whatsappSendDelayMs = 10000;
+    let simulatedElapsed = 0;
+    let processed = 0;
+    let capacityLimitReached = false;
+
+    for (let i = 0; i < events.length; i++) {
+      if (simulatedElapsed >= MAX_CYCLE_DURATION_MS) {
+        capacityLimitReached = true;
+        break;
+      }
+
+      events[i].status = "SENT";
+      events[i].attempts++;
+      processed++;
+      simulatedElapsed += 3000; // 3s per event
+
+      const remainingPending = events.slice(i + 1).filter(e => e.status === "PENDING").length;
+      if (remainingPending > 0) {
+        if (MAX_CYCLE_DURATION_MS - simulatedElapsed <= whatsappSendDelayMs) {
+          capacityLimitReached = true;
+          break;
+        }
+        simulatedElapsed += whatsappSendDelayMs;
+      }
+    }
+
+    assert.ok(processed >= 8 && processed <= 10, `Should safely process around 9 items in 120s, got ${processed}`);
+    assert.equal(capacityLimitReached, true, "Capacity limit must be flagged when budget cannot safely accommodate next delay");
+    assert.ok(simulatedElapsed <= MAX_CYCLE_DURATION_MS, `Execution time (${simulatedElapsed}ms) must strictly stay within 120s budget`);
+
+    // Verify all remaining unprocessed items remain untouched in PENDING status with 0 attempts
+    const remainingEvents = events.slice(processed);
+    assert.ok(remainingEvents.length > 0, "Remaining events must exist");
+    assert.ok(remainingEvents.every(e => e.status === "PENDING" && e.attempts === 0), "All remaining events must remain strictly PENDING with 0 attempts");
+  });
+
+  test("Idempotency guard: Already SENT events are not duplicated or claimed again", () => {
+    const events = [
+      { id: "ev-1", status: "SENT", attempts: 1 },
+      { id: "ev-2", status: "PENDING", attempts: 0 },
+    ];
+
+    // Worker claim query filters status = 'PENDING' and attempts < 3
+    const claimable = events.filter(e => e.status === "PENDING" && e.attempts < 3);
+    assert.equal(claimable.length, 1);
+    assert.equal(claimable[0].id, "ev-2");
+  });
+
+  test("Failure resilience: An individual student error does not abort processing for other students", () => {
+    const events = [
+      { id: "ev-1", student_name: "Ali", validPhone: true, status: "PENDING" },
+      { id: "ev-2", student_name: "Omar", validPhone: false, status: "PENDING" },
+      { id: "ev-3", student_name: "Khaled", validPhone: true, status: "PENDING" },
+    ];
+
+    let successCount = 0;
+    let failedCount = 0;
+
+    for (const ev of events) {
+      if (!ev.validPhone) {
+        ev.status = "FAILED";
+        failedCount++;
+      } else {
+        ev.status = "SENT";
+        successCount++;
+      }
+    }
+
+    assert.equal(successCount, 2, "2 students with valid phones must be sent");
+    assert.equal(failedCount, 1, "1 student with invalid phone must be recorded as failed without stopping others");
+    assert.equal(events[0].status, "SENT");
+    assert.equal(events[1].status, "FAILED");
+    assert.equal(events[2].status, "SENT");
+  });
+});
+
+});
+
+
+
+

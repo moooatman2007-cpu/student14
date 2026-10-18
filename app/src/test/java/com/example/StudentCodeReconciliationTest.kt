@@ -92,7 +92,7 @@ class StudentCodeReconciliationTest {
         )
 
         assertTrue("Student creation should succeed", result.isSuccess)
-        val createdStudent = result.getOrNull()
+        val createdStudent = result.getOrNull()?.data
         assertNotNull(createdStudent)
         val localStudentId = createdStudent!!.studentId
 
@@ -153,8 +153,8 @@ class StudentCodeReconciliationTest {
         assertTrue(s1Result.isSuccess)
         assertTrue(s2Result.isSuccess)
 
-        val s1 = s1Result.getOrNull()!!
-        val s2 = s2Result.getOrNull()!!
+        val s1 = s1Result.getOrNull()!!.data
+        val s2 = s2Result.getOrNull()!!.data
 
         assertNotEquals("Student IDs must be unique", s1.studentId, s2.studentId)
         assertNotEquals("Student Codes must never collide", s1.studentCode, s2.studentCode)
@@ -184,7 +184,7 @@ class StudentCodeReconciliationTest {
             hasWhatsApp = true,
             alternativePhone = null
         )
-        val student = addResult.getOrNull()!!
+        val student = addResult.getOrNull()!!.data
         val pendingOps = outboxDao.getPendingOperationsForTeacher(teacherA)
         val op = pendingOps[0]
 

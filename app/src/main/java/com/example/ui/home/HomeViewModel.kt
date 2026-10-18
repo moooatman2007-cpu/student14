@@ -22,10 +22,16 @@ import com.example.data.repository.StudentRepository
 import com.example.data.repository.TeacherRepository
 import com.example.data.sync.SyncManager
 import com.example.data.sync.SyncStatus
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
@@ -104,38 +110,51 @@ class HomeViewModel(
         val dateFormat = SimpleDateFormat("EEEE، d MMMM yyyy", Locale.forLanguageTag("ar"))
         val todayStr = dateFormat.format(Date())
 
-        viewModelScope.launch {
-            _uiState.update { it.copy(isLoading = true) }
+        val calendar = Calendar.getInstance()
+        val currentYear = calendar.get(Calendar.YEAR)
+        val currentMonth = calendar.get(Calendar.MONTH) + 1
 
-            // 1. Fetch current teacher profile first
-            val teacher = teacherRepository.fetchCurrentTeacher()
+        _uiState.update { it.copy(currentDate = todayStr) }
 
-            // 2. Fetch/refresh grades
-            val initialGrades = gradeRepository.refreshGrades(teacher?.educationalStage)
+        // 1. Fetch teacher, grades and monthly stats concurrently in background without blocking UI
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val teacherDeferred = async { teacherRepository.fetchCurrentTeacher() }
+                val todayAttDeferred = async { attendanceRepository.getTodayAttendanceCount() }
+                val recCountDeferred = async { recitationRepository.getRecitationsCountThisMonth(currentYear, currentMonth) }
+                val exCountDeferred = async { examRepository.getExamsCountThisMonth(currentYear, currentMonth) }
 
-            // 3. Fetch monthly & daily stats
-            val calendar = Calendar.getInstance()
-            val currentYear = calendar.get(Calendar.YEAR)
-            val currentMonth = calendar.get(Calendar.MONTH) + 1
+                val teacher = teacherDeferred.await()
+                val (todayPresent, todayAbsent) = todayAttDeferred.await()
+                val recThisMonth = recCountDeferred.await()
+                val exThisMonth = exCountDeferred.await()
 
-            val (todayPresent, todayAbsent) = attendanceRepository.getTodayAttendanceCount()
-            val recThisMonth = recitationRepository.getRecitationsCountThisMonth(currentYear, currentMonth)
-            val exThisMonth = examRepository.getExamsCountThisMonth(currentYear, currentMonth)
+                // Refresh grades in background
+                gradeRepository.refreshGrades(teacher?.educationalStage)
 
-            val initialTeacherName = teacher?.fullName?.ifBlank { null } ?: teacher?.email ?: ""
-            _uiState.update {
-                it.copy(
-                    teacherName = initialTeacherName,
-                    avatarUrl = teacher?.avatarUrl,
-                    currentDate = todayStr,
-                    todayPresentCount = todayPresent,
-                    todayAbsentCount = todayAbsent,
-                    recitationsThisMonth = recThisMonth,
-                    examsThisMonth = exThisMonth
-                )
+                val teacherName = teacher?.fullName?.ifBlank { null } ?: teacher?.email ?: ""
+                _uiState.update { current ->
+                    val notRecorded = (current.stats.totalStudents - (todayPresent + todayAbsent)).coerceAtLeast(0)
+                    val totalRecorded = todayPresent + todayAbsent
+                    val attendancePct = if (current.stats.totalStudents > 0) (totalRecorded.toFloat() / current.stats.totalStudents.toFloat()) * 100f else 0f
+                    current.copy(
+                        teacherName = if (current.teacherName.isBlank()) teacherName else current.teacherName,
+                        avatarUrl = current.avatarUrl ?: teacher?.avatarUrl,
+                        todayPresentCount = todayPresent,
+                        todayAbsentCount = todayAbsent,
+                        todayNotRecordedCount = notRecorded,
+                        attendancePercentage = attendancePct,
+                        recitationsThisMonth = recThisMonth,
+                        examsThisMonth = exThisMonth
+                    )
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
             }
+        }
 
-            // 4. Observe reactive streams continuously
+        // 2. Observe reactive local Room streams immediately (Stale-While-Revalidate)
+        viewModelScope.launch {
             val firstFive = combine(
                 gradeRepository.getGrades(),
                 studentRepository.getStats(),
@@ -146,7 +165,10 @@ class HomeViewModel(
                 DataBundle1(liveGrades, stats, liveTeacher, students, attendance)
             }
 
-            val groupsFlow = if (teacher != null) groupRepository.observeGroups(teacher.id) else kotlinx.coroutines.flow.flowOf(emptyList())
+            @OptIn(ExperimentalCoroutinesApi::class)
+            val groupsFlow = teacherRepository.getCurrentTeacher().flatMapLatest { teacher ->
+                if (teacher != null) groupRepository.observeGroups(teacher.id) else flowOf(emptyList())
+            }
 
             val lastThree = combine(
                 recitationRepository.getAllRecitationsForTeacher(),
@@ -155,16 +177,6 @@ class HomeViewModel(
                 groupsFlow
             ) { recitations, exams, homework, groups ->
                 DataBundle2(recitations, exams, homework, groups)
-            }
-
-            val groupDays = if (teacher != null) {
-                try {
-                    com.example.data.local.DatabaseProvider.getDatabase().groupDayDao().getGroupDaysByTeacher(teacher.id)
-                } catch (_: Exception) {
-                    emptyList()
-                }
-            } else {
-                emptyList()
             }
 
             val dayOfWeekArabic = when (Calendar.getInstance().get(Calendar.DAY_OF_WEEK)) {
@@ -190,12 +202,12 @@ class HomeViewModel(
                 val homework = b2.homework
                 val groups = b2.groups
 
-                val currentTeacher = liveTeacher ?: teacher
+                val currentTeacher = liveTeacher
                 val name = currentTeacher?.fullName?.ifBlank { null } ?: currentTeacher?.email ?: ""
                 val avatar = currentTeacher?.avatarUrl
                 val teacherStage = currentTeacher?.educationalStage
 
-                val sourceGrades = if (liveGrades.isNotEmpty()) liveGrades else initialGrades
+                val sourceGrades = liveGrades
                 val filteredGrades = if (!teacherStage.isNullOrBlank()) {
                     sourceGrades.filter { com.example.core.model.EducationalStages.isGradeMatchingStage(it.name, teacherStage) }
                 } else {
@@ -207,10 +219,15 @@ class HomeViewModel(
 
                 val followUp = calculateFollowUpStudents(students, attendance, recitations, exams, homework)
 
-                val totalStudents = stats.totalStudents
-                val notRecorded = (totalStudents - (todayPresent + todayAbsent)).coerceAtLeast(0)
-                val totalRecorded = todayPresent + todayAbsent
-                val attendancePct = if (totalStudents > 0) (totalRecorded.toFloat() / totalStudents.toFloat()) * 100f else 0f
+                val groupDays = if (currentTeacher != null) {
+                    try {
+                        com.example.data.local.DatabaseProvider.getDatabase().groupDayDao().getGroupDaysByTeacher(currentTeacher.id)
+                    } catch (_: Exception) {
+                        emptyList()
+                    }
+                } else {
+                    emptyList()
+                }
 
                 val groupsToday = groups.filter { g ->
                     g.active && groupDays.any { gd -> gd.groupId == g.id && gd.dayOfWeek == dayOfWeekArabic }
@@ -228,6 +245,13 @@ class HomeViewModel(
                     )
                 }.sortedBy { tg -> tg.startTime }
 
+                val currentPres = _uiState.value.todayPresentCount
+                val currentAbs = _uiState.value.todayAbsentCount
+                val totalStudents = stats.totalStudents
+                val notRecorded = (totalStudents - (currentPres + currentAbs)).coerceAtLeast(0)
+                val totalRecorded = currentPres + currentAbs
+                val attendancePct = if (totalStudents > 0) (totalRecorded.toFloat() / totalStudents.toFloat()) * 100f else 0f
+
                 HomeUiState(
                     isLoading = false,
                     grades = updatedGrades,
@@ -235,16 +259,17 @@ class HomeViewModel(
                     teacherName = name,
                     avatarUrl = avatar,
                     currentDate = todayStr,
-                    todayPresentCount = todayPresent,
-                    todayAbsentCount = todayAbsent,
+                    todayPresentCount = currentPres,
+                    todayAbsentCount = currentAbs,
                     todayNotRecordedCount = notRecorded,
                     attendancePercentage = attendancePct,
-                    recitationsThisMonth = recThisMonth,
-                    examsThisMonth = exThisMonth,
+                    recitationsThisMonth = _uiState.value.recitationsThisMonth,
+                    examsThisMonth = _uiState.value.examsThisMonth,
                     followUpStudents = followUp,
                     todayGroups = groupsToday
                 )
-            }.collect { newState ->
+            }.flowOn(Dispatchers.Default)
+            .collect { newState ->
                 _uiState.value = newState
             }
         }
@@ -276,11 +301,17 @@ class HomeViewModel(
         val thirtyDaysAgo = LocalDate.now().minusDays(30).toString()
         val fourteenDaysAgo = LocalDate.now().minusDays(14).toString()
 
+        // O(1) indexed lookups
+        val attendanceByStudent = attendance.groupBy { it.studentId }
+        val recitationsByStudent = recitations.groupBy { it.studentId }
+        val examsByStudent = exams.groupBy { it.studentId }
+        val homeworkByStudent = homework.groupBy { it.studentId }
+
         students.forEach { student ->
-            val studentAttendance = attendance.filter { it.studentId == student.studentId }
-            val studentRecitations = recitations.filter { it.studentId == student.studentId }
-            val studentExams = exams.filter { it.studentId == student.studentId }
-            val studentHomework = homework.filter { it.studentId == student.studentId }
+            val studentAttendance = attendanceByStudent[student.studentId] ?: emptyList()
+            val studentRecitations = recitationsByStudent[student.studentId] ?: emptyList()
+            val studentExams = examsByStudent[student.studentId] ?: emptyList()
+            val studentHomework = homeworkByStudent[student.studentId] ?: emptyList()
 
             // Rule A: 3+ absences in last 30 days
             val absencesInLast30Days = studentAttendance.filter { 

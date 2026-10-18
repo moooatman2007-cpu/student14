@@ -1,8 +1,10 @@
 package com.example.data.repository
 
+import com.example.core.model.BatchSyncStatus
 import com.example.core.model.Exam
 import com.example.core.model.ExamSummary
 import com.example.core.model.SupabaseExamDto
+import com.example.core.model.SyncResult
 import com.example.data.SupabaseClientProvider
 import com.example.data.local.DatabaseProvider
 import com.example.data.local.dao.ExamDao
@@ -51,6 +53,7 @@ class SupabaseExamRepository(
             if (!com.example.data.auth.AccountSessionManager.isSessionActive(teacherId)) return
             examDao?.upsertExams(list.map { it.toEntity() })
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
             e.printStackTrace()
         }
     }
@@ -75,6 +78,7 @@ class SupabaseExamRepository(
             if (!com.example.data.auth.AccountSessionManager.isSessionActive(teacherId)) return
             examDao?.upsertExams(list.map { it.toEntity() })
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
             e.printStackTrace()
         }
     }
@@ -330,7 +334,7 @@ class SupabaseExamRepository(
         score: Double,
         maxScore: Double,
         note: String?
-    ): Result<Exam> = withContext(Dispatchers.IO) {
+    ): Result<SyncResult<Exam>> = withContext(Dispatchers.IO) {
         val user = client.auth.currentUserOrNull()
         val teacherId = SupabaseClientProvider.mockTeacherId ?: user?.id
             ?: return@withContext Result.failure(Exception("انتهت الجلسة، يرجى إعادة تسجيل الدخول."))
@@ -360,7 +364,7 @@ class SupabaseExamRepository(
                 examDao?.upsertSingleExam(exam.toEntity())
             }
 
-            Result.success(exam)
+            Result.success(SyncResult(exam, BatchSyncStatus.SAVED_TO_CLOUD))
         } catch (e: Exception) {
             e.printStackTrace()
             val isLocalFailure = e is android.database.sqlite.SQLiteException || e.stackTrace.any { it.className.contains("sqlite") || it.className.contains("room") }
@@ -388,7 +392,7 @@ class SupabaseExamRepository(
                 )
                 OutboxSyncScheduler.scheduleSync()
 
-                Result.success(exam)
+                Result.success(SyncResult(exam, BatchSyncStatus.QUEUED_OFFLINE))
             } catch (ex: Exception) {
                 ex.printStackTrace()
                 Result.failure(Exception("فشل إضافة الامتحان: ${ex.message}"))

@@ -21,10 +21,12 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.example.core.model.*
 import com.example.ui.components.StudentAvatar
+import com.example.ui.components.StudentQrDialog
 import com.example.ui.student_detail.StudentDetailTab
 import com.example.ui.theme.*
 import com.example.util.PhoneUtil
@@ -57,6 +59,7 @@ fun StudentProfileInfoTab(
 ) {
     val context = LocalContext.current
     val hasValidPhone = PhoneUtil.hasValidPhoneNumber(student.parentPhone)
+    var showQrDialog by remember { mutableStateOf(false) }
 
     Column(
         modifier = modifier.fillMaxWidth(),
@@ -92,11 +95,36 @@ fun StudentProfileInfoTab(
                             color = MaterialTheme.colorScheme.onSurface
                         )
                         Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = "كود الطالب: ${student.studentCode}",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.primary,
-                            fontWeight = FontWeight.Medium
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable { showQrDialog = true }
+                                .padding(vertical = 2.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.QrCodeScanner,
+                                contentDescription = "عرض رمز QR",
+                                tint = PrimaryIndigo,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = "كود الطالب: ${student.studentCode}",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.primary,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+                    }
+                    IconButton(
+                        onClick = { showQrDialog = true },
+                        modifier = Modifier.testTag("student_qr_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.QrCodeScanner,
+                            contentDescription = "عرض رمز QR",
+                            tint = PrimaryIndigo
                         )
                     }
                     IconButton(onClick = { onNavigateToEdit(student.studentId) }) {
@@ -146,15 +174,78 @@ fun StudentProfileInfoTab(
                         Text("رقم ولي الأمر", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Text(student.parentPhone.ifBlank { "غير مسجل" }, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold)
-                            if (hasValidPhone) {
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Icon(
-                                    imageVector = Icons.Default.Phone,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(16.dp).clickable { PhoneUtil.launchCallIntent(context, student.parentPhone) },
-                                    tint = PrimaryIndigo
-                                )
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(14.dp))
+
+                if (hasValidPhone) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Surface(
+                            onClick = { PhoneUtil.launchCallIntent(context, student.parentPhone) },
+                            shape = RoundedCornerShape(12.dp),
+                            color = PrimaryIndigo.copy(alpha = 0.1f),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(vertical = 12.dp, horizontal = 12.dp),
+                                horizontalArrangement = Arrangement.Center,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(Icons.Default.Phone, contentDescription = "اتصال", tint = PrimaryIndigo, modifier = Modifier.size(18.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("اتصال بولي الأمر", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold, color = PrimaryIndigo)
                             }
+                        }
+
+                        Surface(
+                            onClick = {
+                                android.widget.Toast.makeText(context, "ستفتح محادثة ولي الأمر في واتساب لتراجع الرسالة وترسلها بنفسك.", android.widget.Toast.LENGTH_SHORT).show()
+                                PhoneUtil.launchWhatsAppIntent(context, student.parentPhone) {
+                                    android.widget.Toast.makeText(context, "تطبيق واتساب غير مثبت على الجهاز", android.widget.Toast.LENGTH_SHORT).show()
+                                }
+                            },
+                            shape = RoundedCornerShape(12.dp),
+                            color = EmeraldGreen.copy(alpha = 0.12f),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(vertical = 12.dp, horizontal = 12.dp),
+                                horizontalArrangement = Arrangement.Center,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(Icons.Default.Send, contentDescription = "واتساب", tint = EmeraldGreen, modifier = Modifier.size(18.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("فتح في واتساب", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold, color = EmeraldGreen)
+                            }
+                        }
+                    }
+                } else {
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Default.PhoneDisabled, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(18.dp))
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("لا يوجد رقم هاتف مسجل لولي الأمر", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                            Text(
+                                text = "إضافة رقم",
+                                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                                color = PrimaryIndigo,
+                                modifier = Modifier.clickable { onNavigateToEdit(student.studentId) }
+                            )
                         }
                     }
                 }
@@ -393,6 +484,14 @@ fun StudentProfileInfoTab(
             }
             QuickActionButton(title = "فتح التقرير الشهري", icon = Icons.AutoMirrored.Filled.ReceiptLong, color = MaterialTheme.colorScheme.onSurfaceVariant, onClick = { onSelectTab(StudentDetailTab.MONTHLY_REPORT) }, modifier = Modifier.fillMaxWidth())
         }
+    }
+
+    if (showQrDialog) {
+        StudentQrDialog(
+            student = student,
+            gradeName = grade?.name,
+            onDismiss = { showQrDialog = false }
+        )
     }
 }
 

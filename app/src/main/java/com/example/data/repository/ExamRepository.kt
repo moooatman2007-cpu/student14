@@ -1,7 +1,9 @@
 package com.example.data.repository
 
+import com.example.core.model.BatchSyncStatus
 import com.example.core.model.Exam
 import com.example.core.model.ExamSummary
+import com.example.core.model.SyncResult
 import kotlinx.coroutines.flow.Flow
 
 interface ExamRepository {
@@ -18,7 +20,7 @@ interface ExamRepository {
         score: Double,
         maxScore: Double,
         note: String? = null
-    ): Result<Exam>
+    ): Result<SyncResult<Exam>>
     suspend fun updateExam(exam: Exam): Result<Exam>
     suspend fun deleteExam(examId: String): Result<Unit>
     suspend fun getExamById(examId: String): Exam?

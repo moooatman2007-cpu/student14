@@ -29,6 +29,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -50,8 +51,6 @@ import com.google.mlkit.vision.barcode.BarcodeScannerOptions
 import com.google.mlkit.vision.barcode.BarcodeScanning
 import com.google.mlkit.vision.barcode.common.Barcode
 import com.google.mlkit.vision.common.InputImage
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicLong
@@ -121,6 +120,7 @@ private fun CameraPreviewScanner(
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val currentOnBarcodeScanned by rememberUpdatedState(onBarcodeScanned)
+    val coroutineScope = rememberCoroutineScope()
 
     val cameraExecutor = remember { Executors.newSingleThreadExecutor() }
 
@@ -209,8 +209,8 @@ private fun CameraPreviewScanner(
                                                         android.util.Log.d("BarcodePerf", "Barcode detected: $rawValue")
                                                     }
 
-                                                    // Dispatch callback instantly on Main UI thread
-                                                    CoroutineScope(Dispatchers.Main).launch {
+                                                    // Dispatch callback instantly on Main UI thread bound to Composable lifecycle
+                                                    coroutineScope.launch {
                                                         currentOnBarcodeScanned(rawValue)
                                                     }
                                                     break

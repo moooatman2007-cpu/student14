@@ -301,7 +301,7 @@ class AddEditStudentGroupSelectionTest {
             hasWhatsApp = true,
             alternativePhone = null
         )
-        val student = addResult.getOrThrow().copy(groupId = "grp_1", teacherId = "teacher_1")
+        val student = addResult.getOrThrow().data.copy(groupId = "grp_1", teacherId = "teacher_1")
         studentRepository.updateStudent(student)
 
         val viewModel = AddEditStudentViewModel(
@@ -348,7 +348,7 @@ class AddEditStudentGroupSelectionTest {
             hasWhatsApp = true,
             alternativePhone = null
         )
-        val student = addResult.getOrThrow().copy(groupId = "grp_inactive_1", teacherId = "teacher_1")
+        val student = addResult.getOrThrow().data.copy(groupId = "grp_inactive_1", teacherId = "teacher_1")
         studentRepository.updateStudent(student)
 
         val viewModel = AddEditStudentViewModel(

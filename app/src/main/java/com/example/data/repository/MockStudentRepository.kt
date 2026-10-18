@@ -1,6 +1,8 @@
 package com.example.data.repository
 
+import com.example.core.model.BatchSyncStatus
 import com.example.core.model.Student
+import com.example.core.model.SyncResult
 import com.example.core.model.TeacherStats
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -144,7 +146,7 @@ class MockStudentRepository(
         parentPhone: String,
         hasWhatsApp: Boolean,
         alternativePhone: String?
-    ): Result<Student> {
+    ): Result<SyncResult<Student>> {
         val nextIdx = lastCodeIndex.incrementAndGet()
         val generatedCode = "ST-" + String.format("%05d", nextIdx)
         val newStudent = Student(
@@ -162,7 +164,7 @@ class MockStudentRepository(
             listOf(newStudent) + current
         }
         syncGradeCounts()
-        return Result.success(newStudent)
+        return Result.success(SyncResult(newStudent, BatchSyncStatus.SAVED_TO_CLOUD))
     }
 
     override suspend fun updateStudent(student: Student): Result<Student> {
@@ -185,12 +187,12 @@ class MockStudentRepository(
         return if (found) Result.success(student) else Result.failure(NoSuchElementException("Student not found"))
     }
 
-    override suspend fun deleteStudent(studentId: String): Result<Unit> {
+    override suspend fun deleteStudent(studentId: String): Result<SyncResult<Unit>> {
         _students.update { current ->
             current.filterNot { it.studentId == studentId }
         }
         syncGradeCounts()
-        return Result.success(Unit)
+        return Result.success(SyncResult(Unit, BatchSyncStatus.SAVED_TO_CLOUD))
     }
 
     override fun searchStudents(query: String, gradeId: String?): Flow<List<Student>> {

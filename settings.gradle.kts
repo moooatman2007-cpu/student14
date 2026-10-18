@@ -22,6 +22,6 @@ dependencyResolutionManagement {
   }
 }
 
-rootProject.name = "Student Manager"
+rootProject.name = "MIDAR"
 
 include(":app")

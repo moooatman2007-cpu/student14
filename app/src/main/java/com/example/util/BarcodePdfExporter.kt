@@ -132,12 +132,15 @@ object BarcodePdfExporter {
             val cardRect = RectF(left, top, right, bottom)
             canvas.drawRoundRect(cardRect, 10f, 10f, cardBorderPaint)
 
-            // Draw Barcode 1D Code 128
+            // Draw Barcode (Code 128 with QR fallback)
             val barcodeCode = student.studentCode.ifBlank { "ST-000" }
             val barcodeBitmap = BarcodeGenerator.generateCode128Bitmap(
                 content = barcodeCode,
                 width = (right - left - 24f).toInt().coerceAtLeast(100),
                 height = (cardHeight * 0.45f).toInt().coerceAtLeast(50)
+            ) ?: BarcodeGenerator.generateQRCodeBitmap(
+                content = barcodeCode,
+                size = (cardHeight * 0.45f).toInt().coerceAtLeast(60)
             )
 
             if (barcodeBitmap != null) {
@@ -248,7 +251,9 @@ object BarcodePdfExporter {
                             }
                         }
                         withContext(Dispatchers.Main) {
-                            callback?.onWriteFinished(arrayOf(PageRange.ALL_PAGES))
+                            val count = (students.size + CARDS_PER_PAGE - 1) / CARDS_PER_PAGE
+                            val safePages = if (count > 0) arrayOf(PageRange(0, count - 1)) else arrayOf(PageRange(0, 0))
+                            callback?.onWriteFinished(safePages)
                         }
                     } catch (e: CancellationException) {
                         withContext(Dispatchers.Main) {
@@ -258,6 +263,155 @@ object BarcodePdfExporter {
                         withContext(Dispatchers.Main) {
                             callback?.onWriteFailed(e.localizedMessage ?: "حدث خطأ أثناء كتابة ملف الطباعة")
                         }
+                    } finally {
+                        try {
+                            destination.close()
+                        } catch (_: Exception) {}
+                    }
+                }
+
+                cancellationSignal?.setOnCancelListener {
+                    writeJob.cancel()
+                }
+            }
+
+            override fun onFinish() {
+                super.onFinish()
+                adapterScope.cancel()
+            }
+        }, null)
+    }
+
+    /**
+     * Prints a high-resolution, full-page QR code card for an individual student using Android Print Framework.
+     * Generates the PDF document safely on a background thread and closes the stream properly so that
+     * the Android Print Spooler receives EOF and does not show a blank page.
+     */
+    fun printStudentQr(context: Context, student: Student, gradeName: String? = null) {
+        val printManager = context.getSystemService(Context.PRINT_SERVICE) as? PrintManager
+        if (printManager == null) {
+            Toast.makeText(context, "الطباعة غير مدعومة على هذا الجهاز", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        val cleanCode = student.studentCode.trim().ifBlank { "ST" }
+        val jobName = "QR_${cleanCode}"
+
+        printManager.print(jobName, object : PrintDocumentAdapter() {
+            private val adapterScope = CoroutineScope(Dispatchers.Main.immediate + SupervisorJob())
+            private var pageHeight = 842
+            private var pageWidth = 595
+
+            override fun onLayout(
+                oldAttributes: PrintAttributes?,
+                newAttributes: PrintAttributes?,
+                cancellationSignal: CancellationSignal?,
+                callback: LayoutResultCallback?,
+                extras: Bundle?
+            ) {
+                if (cancellationSignal?.isCanceled == true) {
+                    callback?.onLayoutCancelled()
+                    return
+                }
+
+                newAttributes?.mediaSize?.let { size ->
+                    pageWidth = (size.widthMils * 72 / 1000).coerceAtLeast(300)
+                    pageHeight = (size.heightMils * 72 / 1000).coerceAtLeast(400)
+                }
+
+                val info = PrintDocumentInfo.Builder("${cleanCode}_QR.pdf")
+                    .setContentType(PrintDocumentInfo.CONTENT_TYPE_DOCUMENT)
+                    .setPageCount(1)
+                    .build()
+
+                callback?.onLayoutFinished(info, newAttributes != oldAttributes)
+            }
+
+            override fun onWrite(
+                pages: Array<out PageRange>?,
+                destination: ParcelFileDescriptor?,
+                cancellationSignal: CancellationSignal?,
+                callback: WriteResultCallback?
+            ) {
+                if (cancellationSignal?.isCanceled == true) {
+                    callback?.onWriteCancelled()
+                    return
+                }
+
+                if (destination == null) {
+                    callback?.onWriteFailed("فشل إعداد ملف الطباعة")
+                    return
+                }
+
+                val writeJob = adapterScope.launch(Dispatchers.IO) {
+                    val pdfDocument = PdfDocument()
+                    try {
+                        if (cancellationSignal?.isCanceled == true) {
+                            withContext(Dispatchers.Main) { callback?.onWriteCancelled() }
+                            return@launch
+                        }
+
+                        val pageInfo = PdfDocument.PageInfo.Builder(pageWidth, pageHeight, 1).create()
+                        val page = pdfDocument.startPage(pageInfo)
+                        val canvas = page.canvas
+
+                        // Pure white background
+                        canvas.drawColor(Color.WHITE)
+
+                        // Generate complete card bitmap
+                        val cardBitmap = BarcodeGenerator.generateStudentQrCardBitmap(
+                            student = student,
+                            gradeName = gradeName,
+                            width = 800,
+                            height = 1000
+                        )
+
+                        // Draw centered on page
+                        val scale = minOf(
+                            (pageWidth - 48f) / cardBitmap.width,
+                            (pageHeight - 64f) / cardBitmap.height
+                        ).coerceAtMost(1f)
+
+                        val drawnWidth = cardBitmap.width * scale
+                        val drawnHeight = cardBitmap.height * scale
+                        val left = (pageWidth - drawnWidth) / 2f
+                        val top = (pageHeight - drawnHeight) / 2f
+
+                        val destRect = RectF(left, top, left + drawnWidth, top + drawnHeight)
+                        canvas.drawBitmap(cardBitmap, null, destRect, null)
+
+                        pdfDocument.finishPage(page)
+
+                        if (cancellationSignal?.isCanceled == true) {
+                            withContext(Dispatchers.Main) { callback?.onWriteCancelled() }
+                            return@launch
+                        }
+
+                        // Write to destination and safely close the stream to send EOF to the print pipe
+                        FileOutputStream(destination.fileDescriptor).use { outputStream ->
+                            pdfDocument.writeTo(outputStream)
+                            outputStream.flush()
+                        }
+
+                        withContext(Dispatchers.Main) {
+                            callback?.onWriteFinished(arrayOf(PageRange(0, 0)))
+                        }
+                    } catch (e: CancellationException) {
+                        withContext(Dispatchers.Main) {
+                            callback?.onWriteCancelled()
+                        }
+                    } catch (e: Exception) {
+                        e.printStackTrace()
+                        withContext(Dispatchers.Main) {
+                            callback?.onWriteFailed(e.localizedMessage ?: "حدث خطأ أثناء طباعة رمز QR")
+                        }
+                    } finally {
+                        try {
+                            pdfDocument.close()
+                        } catch (_: Exception) {}
+                        try {
+                            destination.close()
+                        } catch (_: Exception) {}
                     }
                 }
 

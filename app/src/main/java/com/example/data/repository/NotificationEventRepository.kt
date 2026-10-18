@@ -31,11 +31,27 @@ sealed interface NotificationEventCreationResult {
 }
 
 /**
- * Contract for inserting notification events into Supabase event tables.
+ * Result abstraction for triggering the Supabase notification worker.
+ */
+sealed interface NotificationWorkerResult {
+    data class Success(val message: String, val detailsJson: String? = null) : NotificationWorkerResult
+    data class Skipped(val reason: String) : NotificationWorkerResult
+    data class Error(val error: Throwable, val message: String) : NotificationWorkerResult
+}
+
+/**
+ * Contract for inserting notification events into Supabase event tables and triggering processing.
  */
 interface NotificationEventRepository {
     /**
      * Creates a single notification event as PENDING for the authenticated teacher.
      */
     suspend fun createNotificationEvent(event: NotificationEvent): NotificationEventCreationResult
+
+    /**
+     * Dispatches an asynchronous cycle of the notification worker Edge Function.
+     * Optionally filters execution to a specific event type (e.g. "ABSENCE").
+     * Safe no-op in test/mock environments or when configured with placeholder endpoints.
+     */
+    suspend fun triggerNotificationWorker(eventType: String? = null): NotificationWorkerResult = NotificationWorkerResult.Skipped("Default implementation")
 }

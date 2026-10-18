@@ -83,7 +83,7 @@ class ReportsAndStatisticsAuditTest {
             parentPhone = "01099887711",
             hasWhatsApp = true,
             alternativePhone = null
-        ).getOrThrow()
+        ).getOrThrow().data
 
         // Record attendance, recitation, exam for September 2026
         attendanceRepository.recordOrUpdateAttendance(student.studentId, "2026-09-10", AttendanceStatus.PRESENT, null)
@@ -130,7 +130,7 @@ class ReportsAndStatisticsAuditTest {
             parentPhone = "01122334400",
             hasWhatsApp = true,
             alternativePhone = null
-        ).getOrThrow()
+        ).getOrThrow().data
 
         // Record historical performance in prep stage
         attendanceRepository.recordOrUpdateAttendance(student.studentId, "2026-09-05", AttendanceStatus.PRESENT, null)
@@ -163,13 +163,13 @@ class ReportsAndStatisticsAuditTest {
     fun testCase3_CurrentSecondaryGradeReport_DoesNotContainPreparatoryStudent() = runTest {
         // Old prep student
         val prepGrade = gradeRepository.getGrades().first().first()
-        val prepStudent = studentRepository.addStudent("طالب إعدادي قديم", prepGrade.id, "01000000010", true, null).getOrThrow()
+        val prepStudent = studentRepository.addStudent("طالب إعدادي قديم", prepGrade.id, "01000000010", true, null).getOrThrow().data
 
         // Switch to Secondary
         gradeRepository.setStage(EducationalStages.SECONDARY)
         val secGrades = gradeRepository.getGrades().first()
         val secGrade = secGrades.first { it.name == "الأول الثانوي" }
-        val secStudent = studentRepository.addStudent("طالب ثانوي جديد", secGrade.id, "01000000020", true, null).getOrThrow()
+        val secStudent = studentRepository.addStudent("طالب ثانوي جديد", secGrade.id, "01000000020", true, null).getOrThrow().data
 
         val reportsViewModel = ReportsViewModel(
             studentRepository = studentRepository,
@@ -204,7 +204,7 @@ class ReportsAndStatisticsAuditTest {
     @Test
     fun testCase4_IndividualOldStageStudentReport_RetainsExactPerformanceData() = runTest {
         val prepGrade = gradeRepository.getGrades().first().first()
-        val student = studentRepository.addStudent("طالب إعدادي مميز", prepGrade.id, "01055554444", true, null).getOrThrow()
+        val student = studentRepository.addStudent("طالب إعدادي مميز", prepGrade.id, "01055554444", true, null).getOrThrow().data
 
         // 3 Attendance sessions
         attendanceRepository.recordOrUpdateAttendance(student.studentId, "2026-09-01", AttendanceStatus.PRESENT, null)
@@ -229,11 +229,11 @@ class ReportsAndStatisticsAuditTest {
     @Test
     fun testCase5_ChangingStageDoesNotMutateForeignKeysOrStudentIds() = runTest {
         val prepGrade = gradeRepository.getGrades().first().first()
-        val student = studentRepository.addStudent("طالب ثابت", prepGrade.id, "01033332222", true, null).getOrThrow()
+        val student = studentRepository.addStudent("طالب ثابت", prepGrade.id, "01033332222", true, null).getOrThrow().data
 
-        val att = attendanceRepository.recordOrUpdateAttendance(student.studentId, "2026-09-02", AttendanceStatus.PRESENT, null).getOrThrow()
-        val rec = recitationRepository.addRecitation(student.studentId, "2026-09-02", "سورة آل عمران", "1-15", 19.0, 20.0, null).getOrThrow()
-        val exam = examRepository.addExam(student.studentId, "2026-09-02", "امتحان نصف شهري", null, 48.0, 50.0, null).getOrThrow()
+        val att = attendanceRepository.recordOrUpdateAttendance(student.studentId, "2026-09-02", AttendanceStatus.PRESENT, null).map { it.data }.getOrThrow()
+        val rec = recitationRepository.addRecitation(student.studentId, "2026-09-02", "سورة آل عمران", "1-15", 19.0, 20.0, null).getOrThrow().data
+        val exam = examRepository.addExam(student.studentId, "2026-09-02", "امتحان نصف شهري", null, 48.0, 50.0, null).getOrThrow().data
         val rep = monthlyReportRepository.saveOrUpdateMonthlyReport(student.studentId, 2026, 9, "ملاحظة").getOrThrow()
 
         // Cycle through all stages
@@ -261,7 +261,7 @@ class ReportsAndStatisticsAuditTest {
     @Test
     fun testCase6_ReportsDataIsolatedPerTeacher() = runTest {
         val prepGrade = gradeRepository.getGrades().first().first()
-        val student1 = studentRepository.addStudent("طالب المعلم 1", prepGrade.id, "01000000001", true, null).getOrThrow()
+        val student1 = studentRepository.addStudent("طالب المعلم 1", prepGrade.id, "01000000001", true, null).getOrThrow().data
 
         attendanceRepository.recordOrUpdateAttendance(student1.studentId, "2026-09-05", AttendanceStatus.PRESENT, null)
 
@@ -281,7 +281,7 @@ class ReportsAndStatisticsAuditTest {
     @Test
     fun testCase7_CurrentMonthAndPreviousMonthCalculatedAccurately() = runTest {
         val prepGrade = gradeRepository.getGrades().first().first()
-        val student = studentRepository.addStudent("طالب متعدد الشهور", prepGrade.id, "01088887777", true, null).getOrThrow()
+        val student = studentRepository.addStudent("طالب متعدد الشهور", prepGrade.id, "01088887777", true, null).getOrThrow().data
 
         // August 2026 (Month 8)
         attendanceRepository.recordOrUpdateAttendance(student.studentId, "2026-08-10", AttendanceStatus.PRESENT, null)

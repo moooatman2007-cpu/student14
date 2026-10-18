@@ -1,7 +1,9 @@
 package com.example.data.repository
 
+import com.example.core.model.BatchSyncStatus
 import com.example.core.model.Recitation
 import com.example.core.model.RecitationSummary
+import com.example.core.model.SyncResult
 import kotlinx.coroutines.flow.Flow
 
 interface RecitationRepository {
@@ -18,7 +20,7 @@ interface RecitationRepository {
         score: Double,
         maxScore: Double,
         note: String? = null
-    ): Result<Recitation>
+    ): Result<SyncResult<Recitation>>
     suspend fun updateRecitation(recitation: Recitation): Result<Recitation>
     suspend fun deleteRecitation(recitationId: String): Result<Unit>
     suspend fun getRecitationById(recitationId: String): Recitation?

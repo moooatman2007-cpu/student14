@@ -74,6 +74,7 @@ class SupabaseMonthlyReportRepository : MonthlyReportRepository {
                         eq("id", existing.id ?: "")
                         eq("teacher_id", user.id)
                     }
+                    select()
                 }.decodeSingle<SupabaseMonthlyReportDto>()
             } else {
                 val newDto = SupabaseMonthlyReportDto(
@@ -83,7 +84,9 @@ class SupabaseMonthlyReportRepository : MonthlyReportRepository {
                     month = month,
                     teacherNote = teacherNote
                 )
-                client.postgrest["monthly_reports"].insert(newDto).decodeSingle<SupabaseMonthlyReportDto>()
+                client.postgrest["monthly_reports"].insert(newDto) {
+                    select()
+                }.decodeSingle<SupabaseMonthlyReportDto>()
             }
 
             Result.success(dto.toMonthlyReport())

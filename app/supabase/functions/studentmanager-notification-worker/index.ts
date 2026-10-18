@@ -2,7 +2,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.8";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-worker-secret",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-worker-secret, x-cron-secret",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
   "Content-Type": "application/json",
 };
@@ -25,6 +25,7 @@ export interface ProcessEventContext {
   claimToken: string;
   logicalNotificationKey: string;
   providerIdempotencyKey: string;
+  scopedTeacherId?: string;
 }
 
 export function formatParentPhone(phone: string): string {
@@ -73,16 +74,114 @@ export function constructNotificationMessage(
 ): string {
   switch (eventType) {
     case "ABSENCE":
-      return `السلام عليكم،\n\nنحب نبلغ حضرتك إن الطالب/ة ${studentName} تم تسجيل غيابه/غيابها اليوم.\n\nلو الغياب بعذر، يرجى التواصل مع المعلم.\n\nشكرًا لحضرتك.`;
+      return `مدار | إشعار غياب ⚠️\n\nالسلام عليكم ورحمة الله وبركاته 🌷\n\nنود إحاطة سيادتكم بأن الطالب/ة: *${studentName}*\nتم تسجيل غيابه/ا عن حصة اليوم.\n\nنرجو متابعة انتظام الطالب حرصاً على مستواه التعليمي.\n\nشكرًا لحسن تعاونكم ❤️\nمدار — منصة إدارة ومتابعة الطلاب`;
     case "HOMEWORK":
-      return `السلام عليكم،\n\nنود إعلامكم بخصوص الواجب المدرسي للطالب/ة ${studentName}:\nتم تسجيل حالة الواجب اليوم.\n\nشكرًا لحضرتكم.`;
+      return `مدار | متابعة الواجب ✍️\n\nالسلام عليكم ورحمة الله وبركاته 🌷\n\nنود إعلامكم بخصوص الواجب المدرسي للطالب/ة: *${studentName}*\nتم تسجيل ومتابعة حالة الواجب في حصة اليوم.\n\nمع تمنياتنا بالتفوق المستمر 🌟\nمدار — منصة إدارة ومتابعة الطلاب`;
     case "RECITATION":
-      return `السلام عليكم،\n\nنود إعلامكم بنتيجة تسميع القرآن الكريم للطالب/ة ${studentName}:\nتم تسجيل جلسة التسميع بنجاح.\n\nبارك الله فيه.`;
+      return `مدار | تقييم التسميع 📖\n\nالسلام عليكم ورحمة الله وبركاته 🌷\n\nنود إعلامكم بنتيجة تسميع القرآن الكريم للطالب/ة: *${studentName}*\nتم رصد وتوثيق التسميع في سجل المتابعة بنجاح.\n\nبارك الله فيه ووفقه دائماً 🌟\nمدار — منصة إدارة ومتابعة الطلاب`;
     case "EXAM":
-      return `السلام عليكم،\n\nنود إعلامكم بنتيجة الاختبار للطالب/ة ${studentName}:\nتم رصد نتيجة الاختبار في سجل الطالب.\n\nمع تمنياتنا بالتوفيق الدائم.`;
+      return `مدار | نتيجة الاختبار 📝\n\nالسلام عليكم ورحمة الله وبركاته 🌷\n\nنود إعلامكم بنتيجة الاختبار للطالب/ة: *${studentName}*\nتم رصد نتيجة الاختبار في سجل أداء الطالب.\n\nمع تمنياتنا بمزيد من النجاح والتميز 🎯\nمدار — منصة إدارة ومتابعة الطلاب`;
     case "MONTHLY_REPORT":
-      return `السلام عليكم،\n\nنود إعلامكم بصدور التقرير الشهري للطالب/ة ${studentName}.\nيمكنكم مراجعة المعلم للاطلاع على تقرير الأداء الشامل.\n\nمع تحيات إدارة المعلم.`;
+      return `مدار | التقرير الشهري 📊\n\nالسلام عليكم ورحمة الله وبركاته 🌷\n\nنود إعلامكم بصدور التقرير الشهري الشامل للطالب/ة: *${studentName}*.\nيمكنكم مراجعة المعلم أو الاطلاع على التقرير التفصيلي.\n\nشاكرين اهتمامكم المستمر ❤️\nمدار — منصة إدارة ومتابعة الطلاب`;
   }
+}
+
+export interface ResolveRecipientResult {
+  chatId: string | null;
+  error?: string;
+  lid?: string | null;
+  pn?: string | null;
+}
+
+export async function resolveWahaRecipient(
+  wahaBaseUrl: string,
+  wahaApiKey: string,
+  sessionName: string,
+  rawPhone: string
+): Promise<ResolveRecipientResult> {
+  const formattedPhone = formatParentPhone(rawPhone);
+  if (!formattedPhone || formattedPhone.length < 8) {
+    return { chatId: null, error: `Invalid parent phone number: "${rawPhone}"` };
+  }
+
+  const sessionEncoded = encodeURIComponent(sessionName);
+  const phoneEncoded = encodeURIComponent(formattedPhone);
+  const headers: Record<string, string> = {
+    Accept: "application/json",
+  };
+  if (wahaApiKey) {
+    headers["X-Api-Key"] = wahaApiKey;
+  }
+
+  // 1. Primary Check: Official WAHA LID lookup endpoint GET /api/{session}/lids/pn/{phone}
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 6000);
+    const lidRes = await fetch(
+      `${wahaBaseUrl}/api/${sessionEncoded}/lids/pn/${phoneEncoded}`,
+      {
+        method: "GET",
+        headers,
+        signal: controller.signal,
+      }
+    );
+    clearTimeout(timer);
+
+    if (lidRes.ok) {
+      const lidData = await lidRes.json();
+      if (lidData && typeof lidData.lid === "string" && lidData.lid.trim().length > 0) {
+        return {
+          chatId: lidData.lid.trim(),
+          lid: lidData.lid.trim(),
+          pn: lidData.pn || `${formattedPhone}@c.us`,
+        };
+      }
+    }
+  } catch (_err) {
+    // Continue to check-exists fallback
+  }
+
+  // 2. Secondary Check: WAHA check-exists endpoint GET /api/contacts/check-exists?phone={phone}&session={session}
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 6000);
+    const checkRes = await fetch(
+      `${wahaBaseUrl}/api/contacts/check-exists?phone=${phoneEncoded}&session=${sessionEncoded}`,
+      {
+        method: "GET",
+        headers,
+        signal: controller.signal,
+      }
+    );
+    clearTimeout(timer);
+
+    if (checkRes.ok) {
+      const checkData = await checkRes.json();
+      if (checkData && checkData.numberExists) {
+        let extractedId: string | null = null;
+        if (typeof checkData.id === "string" && checkData.id.trim().length > 0) {
+          extractedId = checkData.id.trim();
+        } else if (checkData.id && typeof checkData.id === "object") {
+          if (typeof checkData.id._serialized === "string" && checkData.id._serialized.trim().length > 0) {
+            extractedId = checkData.id._serialized.trim();
+          }
+        }
+        if (extractedId && (extractedId.endsWith("@lid") || extractedId.endsWith("@c.us"))) {
+          return { chatId: extractedId };
+        }
+      }
+    }
+  } catch (_err) {
+    // Ignore error
+  }
+
+  // 3. Explicit Failure Handling when LID cannot be resolved for WEBJS:
+  // Do NOT blindly send @c.us if LID resolution returned null/failed for WEBJS,
+  // as sending directly to @c.us without a LID causes WAHA 500 "No LID for user".
+  return {
+    chatId: null,
+    error: `WAHA recipient resolution failed: No LID found for phone number ${formattedPhone} in session ${sessionName} (WEBJS).`,
+  };
 }
 
 export async function recordDeliveryAttempt(
@@ -145,7 +244,11 @@ export async function checkWahaRecentMessageSent(
   exactMessageText: string,
   minTimestampSec: number,
   maxTimestampSec: number
-): Promise<{ found: boolean; wahaMessageId: string | null }> {
+): Promise<{
+  status: "FOUND" | "NOT_FOUND" | "CHECK_FAILED";
+  wahaMessageId: string | null;
+  error?: string;
+}> {
   try {
     const url = `${wahaBaseUrl}/api/${encodeURIComponent(sessionName)}/chats/${encodeURIComponent(chatId)}/messages?limit=20`;
     const res = await fetch(url, {
@@ -156,10 +259,21 @@ export async function checkWahaRecentMessageSent(
       },
     });
 
-    if (!res.ok) return { found: false, wahaMessageId: null };
+    if (!res.ok) {
+      const errText = await res.text().catch(() => "");
+      return { status: "CHECK_FAILED", wahaMessageId: null, error: `HTTP ${res.status}: ${errText}` };
+    }
 
-    const messages = await res.json();
-    if (!Array.isArray(messages)) return { found: false, wahaMessageId: null };
+    let messages: any;
+    try {
+      messages = await res.json();
+    } catch (parseErr: any) {
+      return { status: "CHECK_FAILED", wahaMessageId: null, error: `JSON parse error: ${parseErr?.message || String(parseErr)}` };
+    }
+
+    if (!Array.isArray(messages)) {
+      return { status: "CHECK_FAILED", wahaMessageId: null, error: "Response is not an array of messages" };
+    }
 
     const normalizedTarget = exactMessageText.trim();
 
@@ -180,13 +294,16 @@ export async function checkWahaRecentMessageSent(
       const body = typeof msg.body === "string" ? msg.body.trim() : "";
       if (body === normalizedTarget) {
         const id = extractWahaMessageId(msg);
-        return { found: true, wahaMessageId: id };
+        if (id) {
+          return { status: "FOUND", wahaMessageId: id };
+        }
       }
     }
-  } catch (_) {
-    // Non-fatal reconciliation probe
+
+    return { status: "NOT_FOUND", wahaMessageId: null };
+  } catch (err: any) {
+    return { status: "CHECK_FAILED", wahaMessageId: null, error: err?.message || String(err) };
   }
-  return { found: false, wahaMessageId: null };
 }
 
 export async function finalizeNotificationSentV2(
@@ -286,6 +403,17 @@ export async function processNotificationEvent(ctx: ProcessEventContext): Promis
     });
   };
 
+  // 0. Boundary Verification: ensure event belongs to authorized caller if scoped
+  if (ctx.scopedTeacherId && teacherId !== ctx.scopedTeacherId) {
+    await recordFailed("Tenant boundary violation: event does not belong to authorized teacher");
+    return {
+      success: false,
+      reconciled: false,
+      duplicatePrevented: false,
+      error: "Tenant boundary violation: unauthorized teacher access",
+    };
+  }
+
   // 1. Strict Tenant Isolation Check: verify student belongs to teacher
   const { data: student, error: studentErr } = await supabase
     .from("students")
@@ -325,7 +453,60 @@ export async function processNotificationEvent(ctx: ProcessEventContext): Promis
     await recordFailed(`Invalid parent phone number: ${student.parent_phone}`);
     return { success: false, reconciled: false, duplicatePrevented: false, error: "Invalid phone number" };
   }
-  const chatId = `${rawPhone}@c.us`;
+
+  // Resolve recipient chatId:
+  // 1. Primary lookup: Check public.teacher_whatsapp_contacts
+  let chatId: string | null = null;
+  try {
+    const { data: contactData, error: contactError } = await supabase
+      .from("teacher_whatsapp_contacts")
+      .select("chat_id")
+      .eq("teacher_id", teacherId)
+      .eq("phone_e164", rawPhone)
+      .maybeSingle();
+
+    if (contactError) {
+      console.warn(
+        `Notice: teacher_whatsapp_contacts lookup failed for teacher ${teacherId}: ${contactError.message}`
+      );
+    } else if (
+      contactData &&
+      typeof contactData.chat_id === "string" &&
+      contactData.chat_id.trim().length > 0
+    ) {
+      chatId = contactData.chat_id.trim();
+    }
+  } catch (err) {
+    console.warn(
+      `Notice: Exception during teacher_whatsapp_contacts lookup for teacher ${teacherId}:`,
+      err instanceof Error ? err.message : String(err)
+    );
+  }
+
+  // 2. Fallback: Resolve recipient chatId (LID or @c.us) via WAHA APIs if not found in contacts
+  if (!chatId) {
+    const recipientResolution = await resolveWahaRecipient(
+      wahaBaseUrl,
+      wahaApiKey,
+      sessionName,
+      student.parent_phone
+    );
+
+    if (!recipientResolution.chatId) {
+      const resolutionError =
+        recipientResolution.error ||
+        `WAHA recipient resolution failed for ${student.parent_phone}`;
+      await recordFailed(resolutionError);
+      return {
+        success: false,
+        reconciled: false,
+        duplicatePrevented: false,
+        error: resolutionError,
+      };
+    }
+
+    chatId = recipientResolution.chatId;
+  }
 
   // 3. Construct deterministic exact message text BEFORE reconciliation and sendText
   const messageText = constructNotificationMessage(eventType, student.full_name);
@@ -370,7 +551,6 @@ export async function processNotificationEvent(ctx: ProcessEventContext): Promis
         chatId,
         text: messageText,
       }),
-      signal: AbortSignal.timeout(30000),
     });
 
     if (wahaRes.ok) {
@@ -437,7 +617,7 @@ export async function processNotificationEvent(ctx: ProcessEventContext): Promis
       nowSec + 60,
     );
 
-    if (recon.found && recon.wahaMessageId) {
+    if (recon.status === "FOUND" && recon.wahaMessageId) {
       const reconciled = await reconcileDeliveryAttempt(supabase, {
         attemptId,
         claimToken,
@@ -457,15 +637,23 @@ export async function processNotificationEvent(ctx: ProcessEventContext): Promis
           error: finalized.error,
         };
       }
+    } else if (recon.status === "CHECK_FAILED") {
+      return {
+        success: false,
+        reconciled: false,
+        duplicatePrevented: false,
+        wahaSent: true,
+        error: `WAHA check failed (${recon.error || "network/HTTP error"}); attempt remains uncertain for later reconciliation.`,
+      };
+    } else {
+      return {
+        success: false,
+        reconciled: false,
+        duplicatePrevented: false,
+        wahaSent: true,
+        error: sendError || "WAHA result is uncertain; message not found in recent probe, reconciliation required",
+      };
     }
-
-    return {
-      success: false,
-      reconciled: false,
-      duplicatePrevented: false,
-      wahaSent: true,
-      error: sendError || "WAHA result is uncertain; reconciliation required",
-    };
   }
 
   // 6. Explicitly reconcile SENT before fenced finalization.
@@ -506,15 +694,21 @@ export async function processNotificationEvent(ctx: ProcessEventContext): Promis
 
 async function finalizeConfirmedSentReconciliations(
   supabase: any,
+  scopedTeacherId?: string,
 ): Promise<{ finalized: number; errors: string[] }> {
-  const { data: attempts, error: attemptsError } = await supabase
+  let query = supabase
     .from("notification_delivery_attempts")
     .select(
       "attempt_id, claim_token, event_type, event_id, teacher_id, student_id, provider_message_id",
     )
     .eq("provider_status", "SENT")
-    .eq("reconciliation_status", "CONFIRMED_SENT")
-    .limit(50);
+    .eq("reconciliation_status", "CONFIRMED_SENT");
+
+  if (scopedTeacherId) {
+    query = query.eq("teacher_id", scopedTeacherId);
+  }
+
+  const { data: attempts, error: attemptsError } = await query.limit(50);
 
   if (attemptsError) {
     return { finalized: 0, errors: [attemptsError.message] };
@@ -540,6 +734,10 @@ async function finalizeConfirmedSentReconciliations(
   const errors: string[] = [];
 
   for (const attempt of attempts || []) {
+    if (scopedTeacherId && attempt.teacher_id !== scopedTeacherId) {
+      continue;
+    }
+
     const eventType = attempt.event_type as keyof typeof eventTableByType;
     const tableName = eventTableByType[eventType];
     const sourceColumn = sourceColumnByType[eventType];
@@ -548,12 +746,17 @@ async function finalizeConfirmedSentReconciliations(
       continue;
     }
 
-    const { data: event, error: eventError } = await supabase
+    let eventQuery = supabase
       .from(tableName)
       .select(`id, teacher_id, student_id, claim_token, ${sourceColumn}`)
       .eq("id", attempt.event_id)
-      .eq("status", "FAILED")
-      .maybeSingle();
+      .eq("status", "FAILED");
+
+    if (scopedTeacherId) {
+      eventQuery = eventQuery.eq("teacher_id", scopedTeacherId);
+    }
+
+    const { data: event, error: eventError } = await eventQuery.maybeSingle();
 
     if (eventError) {
       errors.push(`${attempt.attempt_id}: ${eventError.message}`);
@@ -567,6 +770,7 @@ async function finalizeConfirmedSentReconciliations(
     const sourceId = event[sourceColumn];
     if (
       event.teacher_id !== attempt.teacher_id ||
+      (scopedTeacherId && event.teacher_id !== scopedTeacherId) ||
       event.student_id !== attempt.student_id ||
       !sourceId
     ) {
@@ -596,7 +800,149 @@ async function finalizeConfirmedSentReconciliations(
   return { finalized, errors };
 }
 
-export async function runWorkerCycle(config: WorkerConfig) {
+export function constantTimeCompare(a: string, b: string): boolean {
+  if (typeof a !== "string" || typeof b !== "string" || a.length === 0 || b.length === 0) {
+    return false;
+  }
+  const aBytes = new TextEncoder().encode(a);
+  const bBytes = new TextEncoder().encode(b);
+  if (aBytes.length !== bBytes.length) {
+    return false;
+  }
+  let mismatch = 0;
+  for (let i = 0; i < aBytes.length; i++) {
+    mismatch |= aBytes[i] ^ bBytes[i];
+  }
+  return mismatch === 0;
+}
+
+export interface AuthResult {
+  isAuthorized: boolean;
+  mode?: "GLOBAL_WORKER" | "SCOPED_TEACHER";
+  teacherId?: string;
+  statusCode?: number;
+  error?: string;
+}
+
+export async function evaluateRequestAuth(
+  req: Request,
+  env: {
+    cronSecret: string;
+    workerSecret: string;
+    supabaseUrl: string;
+    supabaseAnonKey: string;
+    serviceRoleKey: string;
+  },
+  adminSupabase: any,
+): Promise<AuthResult> {
+  const authHeader = req.headers.get("authorization") || "";
+  const apiKeyHeader = req.headers.get("apikey") || "";
+  const headerWorkerSecret = req.headers.get("x-worker-secret") || "";
+  const headerCronSecret = req.headers.get("x-cron-secret") || "";
+
+  const bearerToken = authHeader.toLowerCase().startsWith("bearer ")
+    ? authHeader.slice(7).trim()
+    : "";
+
+  // 1. Backend / Cron / Scheduled Worker Path (Global Queue Access)
+  // MUST have a dedicated, strong secret configured (CRON_SECRET or WORKER_SECRET)
+  // Constant-time comparison protects against timing attacks.
+  // NEVER accept SUPABASE_SERVICE_ROLE_KEY as a client-supplied shared secret!
+  const configuredSecrets = [env.cronSecret, env.workerSecret].filter(
+    (s) => s.trim().length > 0,
+  );
+
+  if (configuredSecrets.length > 0) {
+    const incomingTokens = [
+      bearerToken,
+      headerWorkerSecret,
+      headerCronSecret,
+      apiKeyHeader,
+    ].filter((t) => t.trim().length > 0);
+
+    const isGlobalAuthorized = configuredSecrets.some((secret) =>
+      incomingTokens.some((token) => constantTimeCompare(secret, token)),
+    );
+
+    if (isGlobalAuthorized) {
+      return {
+        isAuthorized: true,
+        mode: "GLOBAL_WORKER",
+      };
+    }
+  }
+
+  // 2. Authenticated User (Teacher) Path from Client / Android App
+  // Must provide a valid Supabase Auth User JWT
+  if (bearerToken.length > 0) {
+    try {
+      const userClient = createClient(env.supabaseUrl, env.supabaseAnonKey || env.serviceRoleKey, {
+        global: { headers: { Authorization: `Bearer ${bearerToken}` } },
+      });
+      const {
+        data: { user },
+        error: userError,
+      } = await userClient.auth.getUser();
+
+      if (userError || !user || !user.id) {
+        return {
+          isAuthorized: false,
+          statusCode: 401,
+          error: "Invalid or expired user session token",
+        };
+      }
+
+      // CRITICAL SECURITY ENFORCEMENT:
+      // Verify that user.id is a genuine, authorized teacher in public.teachers!
+      // This MUST be checked directly against the database, NEVER from client-supplied payload.
+      const { data: teacher, error: teacherError } = await adminSupabase
+        .from("teachers")
+        .select("id")
+        .eq("id", user.id)
+        .maybeSingle();
+
+      if (teacherError) {
+        console.error(`Teacher lookup error for user ${user.id}: ${teacherError.message}`);
+        return {
+          isAuthorized: false,
+          statusCode: 500,
+          error: "Failed to verify teacher authorization",
+        };
+      }
+
+      if (!teacher || !teacher.id) {
+        // Authenticated user exists in Auth, but is NOT a registered teacher!
+        return {
+          isAuthorized: false,
+          statusCode: 403,
+          error: "Forbidden: authenticated user is not registered as a teacher",
+        };
+      }
+
+      // Teacher is verified. Processing MUST BE SCOPED ONLY to this teacher!
+      return {
+        isAuthorized: true,
+        mode: "SCOPED_TEACHER",
+        teacherId: teacher.id,
+      };
+    } catch (err: any) {
+      return {
+        isAuthorized: false,
+        statusCode: 401,
+        error: `Authentication failed: ${err.message || String(err)}`,
+      };
+    }
+  }
+
+  // 3. Unauthenticated request
+  return {
+    isAuthorized: false,
+    statusCode: 401,
+    error: "Unauthorized: Missing authentication credentials",
+  };
+}
+
+export async function runWorkerCycle(config: WorkerConfig, scopedTeacherId?: string) {
   const supabase = createClient(config.supabaseUrl, config.serviceRoleKey, {
     auth: { persistSession: false },
   });
@@ -605,18 +951,27 @@ export async function runWorkerCycle(config: WorkerConfig) {
   const eventTypes = ["ABSENCE", "HOMEWORK", "RECITATION", "EXAM", "MONTHLY_REPORT"] as const;
 
   // Finalize already-confirmed provider sends without calling WAHA.
-  const confirmedReconciliations = await finalizeConfirmedSentReconciliations(supabase);
+  const confirmedReconciliations = await finalizeConfirmedSentReconciliations(supabase, scopedTeacherId);
   results.confirmedReconciliations = confirmedReconciliations;
 
   // 1. Recover stale processing events first using core RPC with explicit named parameters
   results.recovery = {};
   for (const type of eventTypes) {
     try {
-      const { data, error } = await supabase.rpc("recover_notification_event_v2_core", {
+      const rpcParams: Record<string, any> = {
         p_event_type: type,
         p_timeout_minutes: 5,
-      });
-      if (error) {
+      };
+      if (scopedTeacherId) {
+        rpcParams.p_teacher_id = scopedTeacherId;
+      }
+
+      let { data, error } = await supabase.rpc("recover_notification_event_v2_core", rpcParams);
+
+      if (error && scopedTeacherId && error.message.includes("p_teacher_id")) {
+        // Database has legacy recovery function without p_teacher_id: do not run global recovery on scoped teacher invocation!
+        results.recovery[type] = { success: false, error: "Scoped recovery requires database migration" };
+      } else if (error) {
         results.recovery[type] = { success: false, error: error.message };
       } else {
         results.recovery[type] = { success: true, recoveredCount: data ?? 0 };
@@ -637,7 +992,26 @@ export async function runWorkerCycle(config: WorkerConfig) {
     } as const;
 
     try {
-      const { data, error } = await supabase.rpc(claimRpcByType[type]);
+      let rpcName: string = claimRpcByType[type];
+      let rpcParams: Record<string, any> = {};
+
+      if (scopedTeacherId) {
+        rpcName = "claim_notification_event_v2_core";
+        rpcParams = {
+          p_event_type: type,
+          p_teacher_id: scopedTeacherId,
+        };
+      }
+
+      let { data, error } = await supabase.rpc(rpcName, rpcParams);
+
+      if (error && scopedTeacherId && error.message.includes("p_teacher_id")) {
+        // Fallback: try wrapper with p_teacher_id
+        const wrapperRes = await supabase.rpc(claimRpcByType[type], { p_teacher_id: scopedTeacherId });
+        data = wrapperRes.data;
+        error = wrapperRes.error;
+      }
+
       if (error) {
         results[type] = { error: `Claim error: ${error.message}` };
         continue;
@@ -660,6 +1034,19 @@ export async function runWorkerCycle(config: WorkerConfig) {
         continue;
       }
 
+      // CRITICAL DEFENSE-IN-DEPTH TENANT ISOLATION CHECK:
+      if (scopedTeacherId && claimedEvent.teacher_id !== scopedTeacherId) {
+        console.error(
+          `SECURITY ALERT: Claimed event ${claimedEvent.id} belonging to teacher ${claimedEvent.teacher_id} while scoped to teacher ${scopedTeacherId}. Rejecting processing!`
+        );
+        results[type] = {
+          error: "Tenant isolation violation: claimed event does not match authorized teacher",
+          claimedCount: 0,
+          processed: [],
+        };
+        continue;
+      }
+
       const outcome = await processNotificationEvent({
         supabase,
         wahaBaseUrl: config.wahaBaseUrl,
@@ -670,6 +1057,7 @@ export async function runWorkerCycle(config: WorkerConfig) {
         claimToken: data.claim_token,
         logicalNotificationKey: data.logical_notification_key,
         providerIdempotencyKey: data.provider_idempotency_key,
+        scopedTeacherId,
       });
 
       results[type] = {
@@ -703,40 +1091,67 @@ Deno.serve(async (req: Request) => {
     );
   }
 
+  const cronSecret = Deno.env.get("CRON_SECRET") || "";
   const workerSecret = Deno.env.get("WORKER_SECRET") || "";
   const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
-  const headerSecret = req.headers.get("x-worker-secret");
-  const authHeader = req.headers.get("authorization") || "";
+  const supabaseUrl = Deno.env.get("SUPABASE_URL") || "";
+  const supabaseAnonKey = Deno.env.get("SUPABASE_ANON_KEY") || "";
 
-  const isAuthorized =
-    (workerSecret.length > 0 && headerSecret === workerSecret) ||
-    (serviceRoleKey.length > 0 && authHeader === `Bearer ${serviceRoleKey}`);
+  const adminSupabase = createClient(supabaseUrl, serviceRoleKey, {
+    auth: { persistSession: false },
+  });
 
-  if (!isAuthorized) {
-    return new Response(JSON.stringify({ ok: false, error: "Unauthorized" }), {
-      status: 401,
-      headers: corsHeaders,
-    });
+  const authResult = await evaluateRequestAuth(
+    req,
+    {
+      cronSecret,
+      workerSecret,
+      supabaseUrl,
+      supabaseAnonKey,
+      serviceRoleKey,
+    },
+    adminSupabase,
+  );
+
+  if (!authResult.isAuthorized) {
+    return new Response(
+      JSON.stringify({ ok: false, error: authResult.error || "Unauthorized" }),
+      {
+        status: authResult.statusCode || 401,
+        headers: corsHeaders,
+      },
+    );
   }
 
   const config: WorkerConfig = {
-    supabaseUrl: Deno.env.get("SUPABASE_URL") || "",
-    serviceRoleKey: Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "",
-    workerSecret,
+    supabaseUrl,
+    serviceRoleKey,
+    workerSecret: workerSecret || cronSecret,
     wahaBaseUrl: Deno.env.get("WAHA_BASE_URL") || "",
     wahaApiKey: Deno.env.get("WAHA_API_KEY") || "",
   };
 
   try {
-    const summary = await runWorkerCycle(config);
-    return new Response(JSON.stringify({ ok: true, summary }), {
-      status: 200,
-      headers: corsHeaders,
-    });
+    const summary = await runWorkerCycle(config, authResult.teacherId);
+    return new Response(
+      JSON.stringify({
+        ok: true,
+        mode: authResult.mode,
+        teacherId: authResult.teacherId || null,
+        summary,
+      }),
+      {
+        status: 200,
+        headers: corsHeaders,
+      },
+    );
   } catch (err: any) {
-    return new Response(JSON.stringify({ ok: false, error: err.message || String(err) }), {
-      status: 500,
-      headers: corsHeaders,
-    });
+    return new Response(
+      JSON.stringify({ ok: false, error: err.message || String(err) }),
+      {
+        status: 500,
+        headers: corsHeaders,
+      },
+    );
   }
 });

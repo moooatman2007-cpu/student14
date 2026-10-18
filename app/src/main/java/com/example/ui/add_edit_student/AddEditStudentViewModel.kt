@@ -3,6 +3,7 @@ package com.example.ui.add_edit_student
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.core.model.BatchSyncStatus
 import com.example.core.model.Grade
 import com.example.core.model.Group
 import com.example.core.model.Student
@@ -328,16 +329,21 @@ class AddEditStudentViewModel(
                     alternativePhone = state.alternativePhone.ifBlank { null }
                 )
                 if (result.isSuccess) {
-                    val newStudent = result.getOrNull()
+                    val syncResult = result.getOrNull()
+                    val newStudent = syncResult?.data
                     if (newStudent != null && state.selectedGroupId != null) {
                         groupRepository.assignStudentToGroup(tId, newStudent.studentId, state.selectedGroupId)
                     }
+                    val isQueuedOffline = syncResult?.syncStatus == BatchSyncStatus.QUEUED_OFFLINE
                     _uiState.update { current ->
                         current.copy(
                             isSaving = false,
                             createdStudent = if (state.selectedGroupId != null && newStudent != null) newStudent.copy(groupId = state.selectedGroupId) else newStudent,
                             showSuccessDialog = true
                         )
+                    }
+                    if (isQueuedOffline) {
+                        _events.emit(AddEditStudentEvent.ShowError("تم حفظ الطالب محلياً وسيعاد مزامنته فور توفر الاتصال 📡"))
                     }
                 } else {
                     _uiState.update { it.copy(isSaving = false) }

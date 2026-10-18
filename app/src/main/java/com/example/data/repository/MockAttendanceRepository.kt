@@ -3,6 +3,8 @@ package com.example.data.repository
 import com.example.core.model.Attendance
 import com.example.core.model.AttendanceStatus
 import com.example.core.model.AttendanceSummary
+import com.example.core.model.BatchSyncStatus
+import com.example.core.model.SyncResult
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -110,7 +112,7 @@ class MockAttendanceRepository : AttendanceRepository {
         status: AttendanceStatus,
         note: String?,
         groupId: String?
-    ): Result<Attendance> {
+    ): Result<SyncResult<Attendance>> {
         var updatedAttendance: Attendance? = null
         _attendances.update { list ->
             val existingIndex = list.indexOfFirst { it.studentId == studentId && it.date == date && (groupId == null || it.groupId == groupId) }
@@ -139,7 +141,7 @@ class MockAttendanceRepository : AttendanceRepository {
                 listOf(newRecord) + list
             }
         }
-        return Result.success(updatedAttendance!!)
+        return Result.success(SyncResult(updatedAttendance!!, BatchSyncStatus.SAVED_TO_CLOUD))
     }
 
     override suspend fun recordBatchAttendance(

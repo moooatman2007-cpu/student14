@@ -337,9 +337,9 @@ fun MoreScreen(
                             icon = Icons.Default.Language,
                             title = "ربط WhatsApp",
                             subtitle = if (uiState.wahaSessionStatus == "CONNECTED" || uiState.wahaSessionStatus == "WORKING") {
-                                "متصل (${uiState.wahaConnectedPhone ?: "جاهز"}) • إدارة الحساب"
+                                "واتساب متصل (${uiState.wahaConnectedPhone ?: "جاهز"}) • إدارة الحساب"
                             } else {
-                                "ربط حسابك لإرسال الرسائل والتقارير تلقائياً"
+                                "ربط حسابك لإشعارات الرسائل والتقارير"
                             },
                             iconBg = Color(0xFFE8F5E9),
                             iconColor = Color(0xFF2E7D32),
@@ -355,7 +355,7 @@ fun MoreScreen(
                         SettingMenuItem(
                             icon = Icons.Default.Notifications,
                             title = "مزامنة إعدادات WhatsApp",
-                            subtitle = "مزامنة الـ Webhooks وإعدادات الجلسة مع الخادم",
+                            subtitle = "مزامنة وتحديث إعدادات ربط الإشعارات مع الخادم",
                             iconBg = Color(0xFFE0E7FF),
                             iconColor = PrimaryIndigo,
                             onClick = {
@@ -610,7 +610,7 @@ fun MoreScreen(
                 onDismissRequest = viewModel::dismissWahaTestResult,
                 title = {
                     Text(
-                        text = "اختبار اتصال WhatsApp Server",
+                        text = "اختبار اتصال خادم واتساب",
                         style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold)
                     )
                 },
@@ -1025,7 +1025,7 @@ fun MoreScreen(
                                 ) {
                                     if (uiState.pairingCode == null) {
                                         Text(
-                                            text = "اربط WhatsApp بحساب MIDAR لإرسال التنبيهات للطلاب وأولياء الأمور.",
+                                            text = "اربط حساب واتساب الخاص بك لاستخدام ميزات التواصل مع أولياء الأمور.",
                                             style = MaterialTheme.typography.bodyMedium,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                                             textAlign = TextAlign.Right,
@@ -1131,7 +1131,7 @@ fun MoreScreen(
                                                 horizontalAlignment = Alignment.CenterHorizontally
                                             ) {
                                                 Text(
-                                                    text = "كود الربط",
+                                                    text = "كود ربط واتساب",
                                                     style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
                                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                                 )
@@ -1260,7 +1260,7 @@ fun MoreScreen(
                                             )
                                             Spacer(modifier = Modifier.width(Dimens.Spacing8))
                                             Text(
-                                                text = "جاري انتظار إدخال الكود وتأكيد الاتصال...",
+                                                text = "جاري ربط واتساب... أكمل الخطوات في التطبيق وسيتحدث الحساب تلقائيًا.",
                                                 style = MaterialTheme.typography.bodySmall,
                                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                                             )

@@ -1,7 +1,9 @@
 package com.example.data.repository
 
+import com.example.core.model.BatchSyncStatus
 import com.example.core.model.Recitation
 import com.example.core.model.RecitationSummary
+import com.example.core.model.SyncResult
 import com.example.core.model.SupabaseRecitationDto
 import com.example.data.SupabaseClientProvider
 import com.example.data.local.DatabaseProvider
@@ -53,6 +55,7 @@ class SupabaseRecitationRepository(
             if (!com.example.data.auth.AccountSessionManager.isSessionActive(teacherId)) return
             recitationDao?.upsertRecitations(list.map { it.toEntity() })
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
             e.printStackTrace()
         }
     }
@@ -77,6 +80,7 @@ class SupabaseRecitationRepository(
             if (!com.example.data.auth.AccountSessionManager.isSessionActive(teacherId)) return
             recitationDao?.upsertRecitations(list.map { it.toEntity() })
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
             e.printStackTrace()
         }
     }
@@ -326,7 +330,7 @@ class SupabaseRecitationRepository(
         score: Double,
         maxScore: Double,
         note: String?
-    ): Result<Recitation> = withContext(Dispatchers.IO) {
+    ): Result<SyncResult<Recitation>> = withContext(Dispatchers.IO) {
         val user = client.auth.currentUserOrNull()
         val teacherId = SupabaseClientProvider.mockTeacherId ?: user?.id
             ?: return@withContext Result.failure(IllegalStateException("انتهت الجلسة، يرجى تسجيل الدخول أولاً."))
@@ -356,7 +360,7 @@ class SupabaseRecitationRepository(
                 recitationDao?.upsertSingleRecitation(recitation.toEntity())
             }
 
-            Result.success(recitation)
+            Result.success(SyncResult(recitation, BatchSyncStatus.SAVED_TO_CLOUD))
         } catch (e: Exception) {
             e.printStackTrace()
             val isLocalFailure = e is android.database.sqlite.SQLiteException || e.stackTrace.any { it.className.contains("sqlite") || it.className.contains("room") }
@@ -384,7 +388,7 @@ class SupabaseRecitationRepository(
                 )
                 OutboxSyncScheduler.scheduleSync()
 
-                Result.success(recitation)
+                Result.success(SyncResult(recitation, BatchSyncStatus.QUEUED_OFFLINE))
             } catch (ex: Exception) {
                 ex.printStackTrace()
                 Result.failure(Exception("فشل إضافة التسميع: ${ex.message}"))

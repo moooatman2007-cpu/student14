@@ -1,12 +1,18 @@
 package com.example
 
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
+
 import androidx.lifecycle.SavedStateHandle
 import com.example.core.model.AttendanceStatus
+import com.example.core.model.BatchSyncStatus
 import com.example.core.model.EducationalStages
 import com.example.core.model.Homework
 import com.example.core.model.HomeworkStatus
 import com.example.core.model.LessonPayment
 import com.example.core.model.Student
+import com.example.core.model.SyncResult
 import com.example.data.repository.HomeworkRepository
 import com.example.data.repository.MockAttendanceRepository
 import com.example.data.repository.MockExamRepository
@@ -49,7 +55,7 @@ class FakeHomeworkRepository : HomeworkRepository {
         title: String,
         status: HomeworkStatus,
         note: String?
-    ): Result<Homework> {
+    ): Result<SyncResult<Homework>> {
         val hw = Homework(
             homeworkId = "hw_1",
             studentId = studentId,
@@ -59,7 +65,7 @@ class FakeHomeworkRepository : HomeworkRepository {
             status = status,
             note = note
         )
-        return Result.success(hw)
+        return Result.success(SyncResult(hw, BatchSyncStatus.SAVED_TO_CLOUD))
     }
     override suspend fun updateHomework(homework: Homework): Result<Homework> = Result.success(homework)
     override suspend fun deleteHomework(homeworkId: String): Result<Unit> = Result.success(Unit)
@@ -67,6 +73,8 @@ class FakeHomeworkRepository : HomeworkRepository {
 }
 
 @OptIn(ExperimentalCoroutinesApi::class)
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [36])
 class StudentDetailsAndContactTest {
 
     private val testDispatcher = StandardTestDispatcher()
@@ -132,7 +140,7 @@ class StudentDetailsAndContactTest {
             parentPhone = "01012345678",
             hasWhatsApp = true,
             alternativePhone = "01122334455"
-        ).getOrThrow()
+        ).getOrThrow().data
 
         val vm = createViewModel(student.studentId)
         testDispatcher.scheduler.advanceUntilIdle()
@@ -155,7 +163,7 @@ class StudentDetailsAndContactTest {
             parentPhone = "01234567890",
             hasWhatsApp = true,
             alternativePhone = null
-        ).getOrThrow()
+        ).getOrThrow().data
 
         // Teacher switches to Secondary stage
         gradeRepo.setStage(EducationalStages.SECONDARY)
@@ -178,7 +186,7 @@ class StudentDetailsAndContactTest {
     @Test
     fun testMissingPaymentRecord_defaultsToUnpaid() = runTest {
         val grade = gradeRepo.getGrades().first().first()
-        val student = studentRepo.addStudent("سامي عبد الله", grade.id, "01099998888", true, null).getOrThrow()
+        val student = studentRepo.addStudent("سامي عبد الله", grade.id, "01099998888", true, null).getOrThrow().data
 
         val vm = createViewModel(student.studentId)
         testDispatcher.scheduler.advanceUntilIdle()
@@ -191,7 +199,7 @@ class StudentDetailsAndContactTest {
     @Test
     fun testTogglePayment_unpaidToPaid_updatesState() = runTest {
         val grade = gradeRepo.getGrades().first().first()
-        val student = studentRepo.addStudent("عمر فاروق", grade.id, "01011112222", true, null).getOrThrow()
+        val student = studentRepo.addStudent("عمر فاروق", grade.id, "01011112222", true, null).getOrThrow().data
 
         val vm = createViewModel(student.studentId)
         testDispatcher.scheduler.advanceUntilIdle()
@@ -211,7 +219,7 @@ class StudentDetailsAndContactTest {
     @Test
     fun testTogglePayment_paidToUnpaid_updatesState() = runTest {
         val grade = gradeRepo.getGrades().first().first()
-        val student = studentRepo.addStudent("خالد وليد", grade.id, "01033334444", true, null).getOrThrow()
+        val student = studentRepo.addStudent("خالد وليد", grade.id, "01033334444", true, null).getOrThrow().data
 
         val vm = createViewModel(student.studentId)
         testDispatcher.scheduler.advanceUntilIdle()
@@ -250,7 +258,7 @@ class StudentDetailsAndContactTest {
         }
 
         val grade = gradeRepo.getGrades().first().first()
-        val student = studentRepo.addStudent("طالب خطأ شبكة", grade.id, "01055556666", true, null).getOrThrow()
+        val student = studentRepo.addStudent("طالب خطأ شبكة", grade.id, "01055556666", true, null).getOrThrow().data
 
         val vm = createViewModel(student.studentId, customPaymentRepo = failingPaymentRepo)
         testDispatcher.scheduler.advanceUntilIdle()
@@ -271,7 +279,7 @@ class StudentDetailsAndContactTest {
     @Test
     fun testTogglePayment_doesNotModifyAttendanceData() = runTest {
         val grade = gradeRepo.getGrades().first().first()
-        val student = studentRepo.addStudent("طالب الحضور والدفع", grade.id, "01077778888", true, null).getOrThrow()
+        val student = studentRepo.addStudent("طالب الحضور والدفع", grade.id, "01077778888", true, null).getOrThrow().data
 
         // Record 1 attendance record
         attendanceRepo.recordOrUpdateAttendance(
@@ -322,7 +330,7 @@ class StudentDetailsAndContactTest {
     @Test
     fun testParentContact_noPhone_safelyHandled() = runTest {
         val grade = gradeRepo.getGrades().first().first()
-        val studentWithoutPhone = studentRepo.addStudent("طالب بدون هاتف", grade.id, "", false, null).getOrThrow()
+        val studentWithoutPhone = studentRepo.addStudent("طالب بدون هاتف", grade.id, "", false, null).getOrThrow().data
 
         val vm = createViewModel(studentWithoutPhone.studentId)
         testDispatcher.scheduler.advanceUntilIdle()
@@ -335,7 +343,7 @@ class StudentDetailsAndContactTest {
     @Test
     fun testParentContact_whatsAppDisabled_safelyHandled() = runTest {
         val grade = gradeRepo.getGrades().first().first()
-        val studentNoWA = studentRepo.addStudent("طالب بدون واتساب", grade.id, "01099887766", false, null).getOrThrow()
+        val studentNoWA = studentRepo.addStudent("طالب بدون واتساب", grade.id, "01099887766", false, null).getOrThrow().data
 
         val vm = createViewModel(studentNoWA.studentId)
         testDispatcher.scheduler.advanceUntilIdle()
@@ -353,7 +361,7 @@ class StudentDetailsAndContactTest {
     @Test
     fun testTenantIsolation_studentBelongsToCurrentTeacher() = runTest {
         val grade = gradeRepo.getGrades().first().first()
-        val student = studentRepo.addStudent("طالب معزول", grade.id, "01000000000", true, null).getOrThrow()
+        val student = studentRepo.addStudent("طالب معزول", grade.id, "01000000000", true, null).getOrThrow().data
 
         val vm = createViewModel(student.studentId)
         testDispatcher.scheduler.advanceUntilIdle()

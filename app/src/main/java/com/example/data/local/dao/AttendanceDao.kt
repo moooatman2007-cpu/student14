@@ -4,6 +4,7 @@ import androidx.room.Dao
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
+import androidx.room.Transaction
 import com.example.data.local.entity.AttendanceEntity
 import kotlinx.coroutines.flow.Flow
 
@@ -35,6 +36,15 @@ interface AttendanceDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertSingleAttendance(attendance: AttendanceEntity)
+
+    @Transaction
+    suspend fun reconcileAttendance(teacherId: String, attendance: AttendanceEntity) {
+        val existing = getAttendanceByDateSync(teacherId, attendance.studentId, attendance.date)
+        if (existing != null && existing.attendanceId != attendance.attendanceId) {
+            deleteAttendanceById(teacherId, existing.attendanceId)
+        }
+        upsertSingleAttendance(attendance)
+    }
 
     @Query("DELETE FROM attendance WHERE teacher_id = :teacherId AND attendance_id = :attendanceId")
     suspend fun deleteAttendanceById(teacherId: String, attendanceId: String)

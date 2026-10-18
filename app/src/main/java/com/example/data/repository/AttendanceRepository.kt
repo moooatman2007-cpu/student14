@@ -3,6 +3,7 @@ package com.example.data.repository
 import com.example.core.model.Attendance
 import com.example.core.model.AttendanceStatus
 import com.example.core.model.AttendanceSummary
+import com.example.core.model.SyncResult
 import kotlinx.coroutines.flow.Flow
 
 interface AttendanceRepository {
@@ -17,7 +18,7 @@ interface AttendanceRepository {
         status: AttendanceStatus,
         note: String? = null,
         groupId: String? = null
-    ): Result<Attendance>
+    ): Result<SyncResult<Attendance>>
     suspend fun recordBatchAttendance(
         date: String,
         records: List<com.example.core.model.BatchAttendanceItemDto>,

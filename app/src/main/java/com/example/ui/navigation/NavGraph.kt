@@ -18,8 +18,10 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import kotlinx.coroutines.launch
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.navigation.NavGraph.Companion.findStartDestination
@@ -32,7 +34,9 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.example.data.SupabaseClientProvider
 import com.example.data.auth.AccountSessionManager
+import com.example.data.repository.RepositoryProvider
 import com.example.ui.auth.AuthScreen
+import com.example.ui.auth.StatusScreen
 import com.example.ui.add_edit_student.AddEditStudentScreen
 import com.example.ui.home.HomeScreen
 import com.example.ui.more.MoreScreen
@@ -56,14 +60,6 @@ fun MainAppNavigation(
 
     val sessionStatus by SupabaseClientProvider.client.auth.sessionStatus.collectAsState()
 
-    val initialHasSession = remember {
-        try {
-            SupabaseClientProvider.client.auth.currentSessionOrNull() != null
-        } catch (e: Exception) {
-            false
-        }
-    }
-
     LaunchedEffect(sessionStatus) {
         if (sessionStatus is SessionStatus.NotAuthenticated) {
             // First: complete clean teardown of user-scoped local data, outbox, and in-memory caches
@@ -78,6 +74,19 @@ fun MainAppNavigation(
             val user = try { SupabaseClientProvider.client.auth.currentUserOrNull() } catch (_: Exception) { null }
             if (user != null) {
                 AccountSessionManager.setActiveTeacherId(user.id)
+                try {
+                    val teacher = RepositoryProvider.teacherRepository.fetchCurrentTeacher()
+                    val status = teacher?.accountStatus ?: "pending"
+                    if (status != "active") {
+                        if (currentDestination == null || !currentDestination.startsWith("status/")) {
+                            navController.navigate("status/$status") {
+                                popUpTo(0) { inclusive = true }
+                            }
+                        }
+                    }
+                } catch (e: Exception) {
+                    // Gracefully ignore network exceptions on launch
+                }
             }
         }
     }
@@ -153,7 +162,7 @@ fun MainAppNavigation(
     ) { innerPadding ->
         NavHost(
             navController = navController,
-            startDestination = if (initialHasSession) Screen.Home.route else Screen.Auth.route,
+            startDestination = Screen.Auth.route,
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding),
@@ -167,8 +176,27 @@ fun MainAppNavigation(
                         navController.navigate(Screen.Home.route) {
                             popUpTo(Screen.Auth.route) { inclusive = true }
                         }
+                    },
+                    onAccountRestricted = { status ->
+                        navController.navigate("status/$status") {
+                            popUpTo(Screen.Auth.route) { inclusive = true }
+                        }
                     }
                 )
+            }
+            
+            // Status Screen
+            composable("status/{status}") { backStackEntry ->
+                val status = backStackEntry.arguments?.getString("status") ?: "pending"
+                val scope = rememberCoroutineScope()
+                StatusScreen(status = status, onLogout = {
+                    scope.launch {
+                        AccountSessionManager.logout()
+                        navController.navigate(Screen.Auth.route) {
+                            popUpTo(0) { inclusive = true }
+                        }
+                    }
+                })
             }
 
             // Home Destination

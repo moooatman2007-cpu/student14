@@ -239,6 +239,64 @@ async function handleWahaSessionRequest(req, mocks = {}) {
     }
 
     try {
+      // 1. Pre-check session status
+      const getRes = await mocks.wahaFetch(`${wahaBaseUrl}/api/sessions/${sessionName}`, {
+        method: "GET",
+        headers: { "X-Api-Key": wahaApiKey },
+      });
+
+      if (!getRes.ok && getRes.status !== 404) {
+        return {
+          status: 502,
+          headers: corsHeaders,
+          body: { success: false, message: "تعذر التحقق من حالة جلسة واتساب في خادم WAHA" },
+        };
+      }
+
+      let currentStatus = "STOPPED";
+      let meId = null;
+      if (getRes.ok) {
+        const sessionData = await getRes.json();
+        currentStatus = sessionData?.status || "STOPPED";
+        meId = sessionData?.me?.id || sessionData?.me || null;
+      }
+
+      // If already connected
+      if (currentStatus === "WORKING" || currentStatus === "CONNECTED") {
+        let cleanPhone = "";
+        if (meId && typeof meId === "string") {
+          cleanPhone = meId.split("@")[0].replace(/[^0-9]/g, "");
+        }
+        if (mocks.dbUpsert) {
+          mocks.dbUpsert("service_role", {
+            teacher_id: teacherId,
+            session_name: sessionName,
+            status: "CONNECTED",
+            connected_phone: cleanPhone || null,
+          });
+        }
+        return {
+          status: 200,
+          headers: corsHeaders,
+          body: {
+            success: true,
+            alreadyConnected: true,
+            status: "CONNECTED",
+            session_name: sessionName,
+            connected_phone: cleanPhone || null,
+            message: "جلسة واتساب متصلة بالفعل ونشطة.",
+          },
+        };
+      }
+
+      // If stopped, start
+      if (currentStatus === "STOPPED" || currentStatus === "FAILED") {
+        await mocks.wahaFetch(`${wahaBaseUrl}/api/sessions/${sessionName}/start`, {
+          method: "POST",
+          headers: { "X-Api-Key": wahaApiKey },
+        });
+      }
+
       const pairingRes = await mocks.wahaFetch(`${wahaBaseUrl}/api/${sessionName}/auth/request-code`, {
         method: "POST",
         headers: { "X-Api-Key": wahaApiKey },
@@ -260,6 +318,7 @@ async function handleWahaSessionRequest(req, mocks = {}) {
         body: {
           success: true,
           code: pairingData?.code || "ABCD-ABCD",
+          status: "SCAN_QR_CODE",
         },
       };
     } catch (err) {
@@ -636,6 +695,7 @@ describe("Comprehensive Edge Function waha-session Unit Tests (15 Test Cases)", 
 
   test("17. REQUEST_PAIRING_CODE success scenario", async () => {
     let pairingBody = null;
+    let startCalled = false;
     const res = await handleWahaSessionRequest(
       {
         headers: { authorization: "Bearer teacher-a-jwt" },
@@ -645,8 +705,12 @@ describe("Comprehensive Edge Function waha-session Unit Tests (15 Test Cases)", 
       {
         getUser: mockGetUser,
         wahaFetch: async (url, options) => {
-          if (url.includes("/api/sessions/teacher_")) {
-            return { status: 200, ok: true, json: async () => ({ status: "WORKING" }) };
+          if (url.includes("/api/sessions/teacher_") && (!options || options.method === "GET")) {
+            return { status: 200, ok: true, json: async () => ({ status: "SCAN_QR_CODE" }) };
+          }
+          if (url.includes("/start")) {
+            startCalled = true;
+            return { status: 200, ok: true };
           }
           if (url.includes("/auth/request-code")) {
             pairingBody = JSON.parse(options.body);
@@ -661,6 +725,87 @@ describe("Comprehensive Edge Function waha-session Unit Tests (15 Test Cases)", 
     assert.equal(res.body.success, true);
     assert.equal(res.body.code, "ABCD-ABCD");
     assert.equal(pairingBody.phoneNumber, "201012345678");
+  });
+
+  test("17b. REQUEST_PAIRING_CODE already connected scenario -> returns CONNECTED immediately without requesting code", async () => {
+    let requestCodeCalled = false;
+    let dbPayload = null;
+
+    const res = await handleWahaSessionRequest(
+      {
+        headers: { authorization: "Bearer teacher-a-jwt" },
+        method: "POST",
+        body: { action: "REQUEST_PAIRING_CODE", phoneNumber: "201012345678" },
+      },
+      {
+        getUser: mockGetUser,
+        dbUpsert: (role, payload) => {
+          dbPayload = payload;
+        },
+        wahaFetch: async (url) => {
+          if (url.includes("/api/sessions/teacher_")) {
+            return {
+              status: 200,
+              ok: true,
+              json: async () => ({
+                status: "WORKING",
+                me: { id: "201099999999@c.us" },
+              }),
+            };
+          }
+          if (url.includes("/request-code")) {
+            requestCodeCalled = true;
+            return { status: 200, ok: true };
+          }
+          return { ok: true };
+        },
+      }
+    );
+
+    assert.equal(res.status, 200);
+    assert.equal(res.body.success, true);
+    assert.equal(res.body.alreadyConnected, true);
+    assert.equal(res.body.status, "CONNECTED");
+    assert.equal(res.body.connected_phone, "201099999999");
+    assert.equal(requestCodeCalled, false); // Crucial: did NOT call request-code
+    assert.equal(dbPayload?.status, "CONNECTED");
+    assert.equal(dbPayload?.connected_phone, "201099999999");
+  });
+
+  test("17c. REQUEST_PAIRING_CODE stopped session -> starts session then requests code", async () => {
+    let startCalled = false;
+    let requestCodeCalled = false;
+
+    const res = await handleWahaSessionRequest(
+      {
+        headers: { authorization: "Bearer teacher-a-jwt" },
+        method: "POST",
+        body: { action: "REQUEST_PAIRING_CODE", phoneNumber: "201012345678" },
+      },
+      {
+        getUser: mockGetUser,
+        wahaFetch: async (url) => {
+          if (url.includes("/api/sessions/teacher_") && !url.includes("/start")) {
+            return { status: 200, ok: true, json: async () => ({ status: "STOPPED" }) };
+          }
+          if (url.includes("/start")) {
+            startCalled = true;
+            return { status: 200, ok: true };
+          }
+          if (url.includes("/auth/request-code")) {
+            requestCodeCalled = true;
+            return { status: 200, ok: true, json: async () => ({ code: "WXYZ-1234" }) };
+          }
+          return { ok: true };
+        },
+      }
+    );
+
+    assert.equal(res.status, 200);
+    assert.equal(res.body.success, true);
+    assert.equal(res.body.code, "WXYZ-1234");
+    assert.equal(startCalled, true);
+    assert.equal(requestCodeCalled, true);
   });
 
   test("18. REQUEST_PAIRING_CODE invalid or missing phoneNumber fails", async () => {
@@ -689,7 +834,7 @@ describe("Comprehensive Edge Function waha-session Unit Tests (15 Test Cases)", 
         getUser: mockGetUser,
         wahaFetch: async (url) => {
           if (url.includes("/api/sessions/teacher_")) {
-            return { status: 200, ok: true, json: async () => ({ status: "WORKING" }) };
+            return { status: 200, ok: true, json: async () => ({ status: "SCAN_QR_CODE" }) };
           }
           if (url.includes("/auth/request-code")) {
             return { status: 500, ok: false, text: async () => "Internal Server Error" };

@@ -46,12 +46,8 @@ class SupabaseGroupRepository(
 
     override suspend fun getGroupById(teacherId: String, groupId: String): Group? =
         withContext(Dispatchers.IO) {
-            val entity = groupDao?.getGroupById(groupId)
-            if (entity != null && entity.teacherId == teacherId) {
-                entity.toDomain()
-            } else {
-                null
-            }
+            val entity = groupDao?.getGroupById(teacherId, groupId)
+            entity?.toDomain()
         }
 
     override suspend fun refreshGroups(teacherId: String): Result<Unit> = withContext(Dispatchers.IO) {
@@ -132,7 +128,7 @@ class SupabaseGroupRepository(
             val authId = getAuthenticatedTeacherId()
             if (authId != teacherId) return@withContext Result.failure(Exception("غير مصرح بحذف هذه المجموعة."))
 
-            val group = groupDao?.getGroupById(groupId) ?: return@withContext Result.failure(Exception("المجموعة غير موجودة."))
+            val group = groupDao?.getGroupById(teacherId, groupId) ?: return@withContext Result.failure(Exception("المجموعة غير موجودة."))
             if (group.teacherId != teacherId) return@withContext Result.failure(Exception("غير مصرح بحذف هذه المجموعة."))
 
             // Try cloud delete first to properly check foreign key constraints (students / attendance)
@@ -174,7 +170,7 @@ class SupabaseGroupRepository(
 
     override suspend fun deactivateGroup(teacherId: String, groupId: String): Result<Unit> = withContext(Dispatchers.IO) {
         try {
-            val entity = groupDao?.getGroupById(groupId) ?: return@withContext Result.failure(Exception("Group not found"))
+            val entity = groupDao?.getGroupById(teacherId, groupId) ?: return@withContext Result.failure(Exception("Group not found"))
             if (entity.teacherId != teacherId) return@withContext Result.failure(Exception("Cross-tenant group update rejected"))
             val updated = entity.toDomain().copy(active = false)
             updateGroup(updated).map { }
@@ -191,7 +187,7 @@ class SupabaseGroupRepository(
             val student = studentDao?.getStudentByIdSync(teacherId, studentId) ?: return@withContext Result.failure(Exception("Student not found"))
             
             if (groupId != null) {
-                val group = groupDao?.getGroupById(groupId) ?: return@withContext Result.failure(Exception("Group not found"))
+                val group = groupDao?.getGroupById(teacherId, groupId) ?: return@withContext Result.failure(Exception("Group not found"))
                 if (group.teacherId != teacherId) return@withContext Result.failure(Exception("Cross-tenant group assignment rejected"))
                 if (group.gradeId != student.gradeId) return@withContext Result.failure(Exception("Incompatible grade"))
             }

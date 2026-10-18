@@ -60,7 +60,7 @@ class AttendanceAndPaymentConcurrencyTest {
         )
 
         assertTrue(result.isSuccess)
-        val attendance = result.getOrNull()
+        val attendance = result.getOrNull()?.data
         assertNotNull(attendance)
         assertEquals(studentId, attendance?.studentId)
         assertEquals(date, attendance?.date)
@@ -266,7 +266,7 @@ class AttendanceAndPaymentConcurrencyTest {
                 status: AttendanceStatus,
                 note: String?,
                 groupId: String?
-            ): Result<Attendance> {
+            ): Result<com.example.core.model.SyncResult<Attendance>> {
                 if (attempts.incrementAndGet() == 1) {
                     return Result.failure(Exception("Network timeout simulation"))
                 }
@@ -284,7 +284,7 @@ class AttendanceAndPaymentConcurrencyTest {
         // Retry succeeds
         val secondTry = failingRepo.recordOrUpdateAttendance(studentId, date, AttendanceStatus.PRESENT, null)
         assertTrue(secondTry.isSuccess)
-        assertEquals(AttendanceStatus.PRESENT, secondTry.getOrNull()?.status)
+        assertEquals(AttendanceStatus.PRESENT, secondTry.getOrNull()?.data?.status)
 
         // Verify single record
         val list = failingRepo.getAttendanceForStudent(studentId).first()

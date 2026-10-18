@@ -5,6 +5,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.core.model.Attendance
 import com.example.core.model.AttendanceStatus
+import com.example.core.model.BatchSyncStatus
 import com.example.core.model.AttendanceSummary
 import com.example.core.model.Exam
 import com.example.core.model.ExamSummary
@@ -25,7 +26,12 @@ import com.example.data.repository.MonthlyReportRepository
 import com.example.data.repository.PaymentRepository
 import com.example.data.repository.RecitationRepository
 import com.example.data.repository.RepositoryProvider
+import com.example.core.model.NotificationEvent
+import com.example.data.repository.NotificationEventCreationResult
+import com.example.data.repository.NotificationEventRepository
 import com.example.data.repository.StudentRepository
+import io.github.jan.supabase.auth.auth
+import com.example.util.DateUtils
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -38,6 +44,9 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
@@ -132,7 +141,8 @@ class StudentDetailViewModel(
     private val monthlyReportRepository: MonthlyReportRepository = RepositoryProvider.monthlyReportRepository,
     private val homeworkRepository: HomeworkRepository = RepositoryProvider.homeworkRepository,
     private val paymentRepository: PaymentRepository = RepositoryProvider.paymentRepository,
-    private val groupRepository: GroupRepository = RepositoryProvider.groupRepository
+    private val groupRepository: GroupRepository = RepositoryProvider.groupRepository,
+    private val notificationEventRepository: NotificationEventRepository = RepositoryProvider.notificationEventRepository
 ) : ViewModel() {
 
     private val studentIdArg: String? = savedStateHandle?.get<String>("studentId")
@@ -148,9 +158,7 @@ class StudentDetailViewModel(
 
     init {
         updateMonthName()
-        if (studentIdArg != null) {
-            loadStudent(studentIdArg)
-        }
+        studentIdArg?.let { loadStudent(it) }
     }
 
     private fun getArabicMonthName(month: Int): String {
@@ -178,7 +186,6 @@ class StudentDetailViewModel(
 
     fun selectTab(tab: StudentDetailTab) {
         _uiState.update { it.copy(selectedTab = tab) }
-        refreshCurrentTabData()
     }
 
     fun navigateMonth(delta: Int) {
@@ -255,41 +262,45 @@ class StudentDetailViewModel(
                     )
                 }
                 
-                // Load global data for overview
-                launch {
-                    attendanceRepository.getAttendanceForStudent(studentId).collectLatest { list ->
+                // Load global data for overview and populate monthly slices locally from Room cache
+                viewModelScope.launch {
+                    combine(
+                        attendanceRepository.getAttendanceForStudent(studentId),
+                        recitationRepository.getRecitationsForStudent(studentId),
+                        examRepository.getExamsForStudent(studentId),
+                        homeworkRepository.getHomeworkForStudent(studentId)
+                    ) { attendanceList, recitationList, examList, homeworkList ->
                         val summary = AttendanceSummary(
-                            totalDays = list.size,
-                            presentCount = list.count { it.status == AttendanceStatus.PRESENT },
-                            absentCount = list.count { it.status == AttendanceStatus.ABSENT },
-                            lateCount = list.count { it.status == AttendanceStatus.LATE },
-                            excusedCount = list.count { it.status == AttendanceStatus.EXCUSED },
-                            attendanceRate = if (list.isNotEmpty()) (list.count { it.status == AttendanceStatus.PRESENT }.toFloat() / list.size) * 100f else 0f
+                            totalDays = attendanceList.size,
+                            presentCount = attendanceList.count { it.status == AttendanceStatus.PRESENT },
+                            absentCount = attendanceList.count { it.status == AttendanceStatus.ABSENT },
+                            lateCount = attendanceList.count { it.status == AttendanceStatus.LATE },
+                            excusedCount = attendanceList.count { it.status == AttendanceStatus.EXCUSED },
+                            attendanceRate = if (attendanceList.isNotEmpty()) (attendanceList.count { it.status == AttendanceStatus.PRESENT }.toFloat() / attendanceList.size) * 100f else 0f
                         )
+                        val sortedAtt = attendanceList.sortedByDescending { a -> a.date }
+                        val sortedRec = recitationList.sortedByDescending { r -> r.date }
+                        val sortedEx = examList.sortedByDescending { e -> e.date }
+                        val sortedHw = homeworkList.sortedByDescending { h -> h.date }
+
+                        StudentCombinedData(
+                            sortedAtt = sortedAtt,
+                            attendanceSummary = summary,
+                            sortedRec = sortedRec,
+                            sortedEx = sortedEx,
+                            sortedHw = sortedHw
+                        )
+                    }.collectLatest { data ->
                         _uiState.update { 
                             it.copy(
-                                globalAttendances = list.sortedByDescending { a -> a.date },
-                                globalAttendanceSummary = summary
+                                globalAttendances = data.sortedAtt,
+                                globalAttendanceSummary = data.attendanceSummary,
+                                globalRecitations = data.sortedRec,
+                                globalExams = data.sortedEx,
+                                globalHomeworks = data.sortedHw
                             )
                         }
-                    }
-                }
-                
-                launch {
-                    recitationRepository.getRecitationsForStudent(studentId).collectLatest { list ->
-                        _uiState.update { it.copy(globalRecitations = list.sortedByDescending { r -> r.date }) }
-                    }
-                }
-                
-                launch {
-                    examRepository.getExamsForStudent(studentId).collectLatest { list ->
-                        _uiState.update { it.copy(globalExams = list.sortedByDescending { e -> e.date }) }
-                    }
-                }
-                
-                launch {
-                    homeworkRepository.getHomeworkForStudent(studentId).collectLatest { list ->
-                        _uiState.update { it.copy(globalHomeworks = list.sortedByDescending { h -> h.date }) }
+                        updateMonthlySlices()
                     }
                 }
 
@@ -306,53 +317,94 @@ class StudentDetailViewModel(
         }
     }
 
+    private fun updateMonthlySlices() {
+        val year = _uiState.value.selectedYear
+        val month = _uiState.value.selectedMonth
+        val globalAtt = _uiState.value.globalAttendances
+        val globalRec = _uiState.value.globalRecitations
+        val globalEx = _uiState.value.globalExams
+        val globalHw = _uiState.value.globalHomeworks
+
+        viewModelScope.launch {
+            val updateBlock = withContext(Dispatchers.Default) {
+                val dateRange = DateUtils.getMonthDateRange(year, month)
+                val startDate = dateRange.startDate
+                val endDate = dateRange.endDate
+
+                val monthlyAtt = globalAtt.filter { it.date >= startDate && it.date <= endDate }
+                val attSummary = AttendanceSummary(
+                    totalDays = monthlyAtt.size,
+                    presentCount = monthlyAtt.count { it.status == AttendanceStatus.PRESENT },
+                    absentCount = monthlyAtt.count { it.status == AttendanceStatus.ABSENT },
+                    lateCount = monthlyAtt.count { it.status == AttendanceStatus.LATE },
+                    excusedCount = monthlyAtt.count { it.status == AttendanceStatus.EXCUSED },
+                    attendanceRate = if (monthlyAtt.isNotEmpty()) (monthlyAtt.count { it.status == AttendanceStatus.PRESENT }.toFloat() / monthlyAtt.size) * 100f else 0f
+                )
+
+                val monthlyRec = globalRec.filter { it.date >= startDate && it.date <= endDate }
+                val recSummary = if (monthlyRec.isEmpty()) {
+                    RecitationSummary()
+                } else {
+                    val totalCount = monthlyRec.size
+                    val avgScore = monthlyRec.map { it.score }.average()
+                    val avgMaxScore = monthlyRec.map { it.maxScore }.average()
+                    val avgPct = monthlyRec.map { (it.score / it.maxScore) * 100.0 }.average().toFloat()
+                    RecitationSummary(
+                        totalCount = totalCount,
+                        averageScore = avgScore,
+                        averageMaxScore = avgMaxScore,
+                        averagePercentage = avgPct
+                    )
+                }
+
+                val monthlyEx = globalEx.filter { it.date >= startDate && it.date <= endDate }
+                val exSummary = if (monthlyEx.isEmpty()) {
+                    ExamSummary()
+                } else {
+                    val totalCount = monthlyEx.size
+                    val avgScore = monthlyEx.map { it.score }.average()
+                    val percentages = monthlyEx.map { (it.score / it.maxScore) * 100.0 }
+                    val avgPct = percentages.average().toFloat()
+                    val highestPct = percentages.maxOrNull()?.toFloat() ?: 0f
+                    val lowestPct = percentages.minOrNull()?.toFloat() ?: 0f
+                    ExamSummary(
+                        totalCount = totalCount,
+                        averageScore = avgScore,
+                        averagePercentage = avgPct,
+                        highestPercentage = highestPct,
+                        lowestPercentage = lowestPct
+                    )
+                }
+
+                val monthlyHw = globalHw.filter { it.date >= startDate && it.date <= endDate }
+
+                val updater: (StudentDetailUiState) -> StudentDetailUiState = { state ->
+                    state.copy(
+                        attendances = monthlyAtt,
+                        attendanceSummary = attSummary,
+                        recitations = monthlyRec,
+                        recitationSummary = recSummary,
+                        exams = monthlyEx,
+                        examSummary = exSummary,
+                        homeworks = monthlyHw
+                    )
+                }
+                updater
+            }
+            _uiState.update { updateBlock(it) }
+        }
+    }
+
     private fun refreshCurrentTabData() {
         val studentId = _uiState.value.student?.studentId ?: return
         val year = _uiState.value.selectedYear
         val month = _uiState.value.selectedMonth
 
+        updateMonthlySlices()
+
         refreshJob?.cancel()
         refreshJob = viewModelScope.launch {
             coroutineScope {
-                // Load Attendance
-                launch {
-                    attendanceRepository.getAttendanceForStudentByMonth(studentId, year, month).collectLatest { list ->
-                        val summary = attendanceRepository.getAttendanceSummaryForStudent(studentId, year, month)
-                        _uiState.update {
-                            it.copy(
-                                attendances = list,
-                                attendanceSummary = summary
-                            )
-                        }
-                    }
-                }
-
-                // Load Recitations
-                launch {
-                    recitationRepository.getRecitationsForStudent(studentId).collectLatest { list ->
-                        val summary = recitationRepository.getRecitationSummaryForStudent(studentId, year, month)
-                        _uiState.update {
-                            it.copy(
-                                recitations = list,
-                                recitationSummary = summary
-                            )
-                        }
-                    }
-                }
-
-                // Load Exams
-                launch {
-                    examRepository.getExamsForStudent(studentId).collectLatest { list ->
-                        val summary = examRepository.getExamSummaryForStudent(studentId, year, month)
-                        _uiState.update {
-                            it.copy(
-                                exams = list,
-                                examSummary = summary
-                            )
-                        }
-                    }
-                }
-
                 // Load Monthly Performance & Report
                 launch {
                     val performance = monthlyReportRepository.getStudentMonthlyPerformance(studentId, year, month)
@@ -361,15 +413,6 @@ class StudentDetailViewModel(
                             studentMonthlyPerformance = performance,
                             teacherMonthlyNote = performance?.teacherNote ?: ""
                         )
-                    }
-                }
-
-                // Load Homework
-                launch {
-                    homeworkRepository.getHomeworkForStudentByMonth(studentId, year, month).collectLatest { list ->
-                        _uiState.update {
-                            it.copy(homeworks = list)
-                        }
                     }
                 }
 
@@ -488,7 +531,13 @@ class StudentDetailViewModel(
                 )
                 if (result.isSuccess) {
                     closeAttendanceDialog()
-                    _events.emit(StudentDetailEvent.ShowMessage("تم تسجيل الحضور بنجاح"))
+                    val syncRes = result.getOrNull()
+                    val msg = if (syncRes?.syncStatus == BatchSyncStatus.QUEUED_OFFLINE) {
+                        "تم تسجيل الحضور محلياً وسيتم المزامنة عند توفر الاتصال 📡"
+                    } else {
+                        "تم تسجيل الحضور بنجاح"
+                    }
+                    _events.emit(StudentDetailEvent.ShowMessage(msg))
                     refreshCurrentTabData()
                 } else {
                     val errorMsg = result.exceptionOrNull()?.message ?: "تعذر تسجيل الحضور"
@@ -570,8 +619,8 @@ class StudentDetailViewModel(
         _uiState.update { it.copy(isSaving = true) }
         viewModelScope.launch {
             try {
-                val result = if (currentEdit == null) {
-                    recitationRepository.addRecitation(
+                if (currentEdit == null) {
+                    val result = recitationRepository.addRecitation(
                         studentId = studentId,
                         date = date,
                         title = title,
@@ -580,8 +629,41 @@ class StudentDetailViewModel(
                         maxScore = maxScore,
                         note = note
                     )
+                    if (result.isSuccess) {
+                        closeRecitationDialog()
+                        val syncRes = result.getOrNull()
+                        if (syncRes?.syncStatus == BatchSyncStatus.SAVED_TO_CLOUD) {
+                            val recitation = syncRes.data
+                            val recitationId = recitation?.recitationId ?: ""
+                            val teacherId = _uiState.value.student?.teacherId ?: com.example.data.SupabaseClientProvider.mockTeacherId ?: com.example.data.SupabaseClientProvider.client.auth.currentUserOrNull()?.id ?: ""
+                            if (recitationId.isNotBlank() && teacherId.isNotBlank()) {
+                                try {
+                                    val event = NotificationEvent.Recitation(
+                                        teacherId = teacherId,
+                                        studentId = studentId,
+                                        recitationId = recitationId
+                                    )
+                                    val creationRes = notificationEventRepository.createNotificationEvent(event)
+                                    if (creationRes is NotificationEventCreationResult.Created || creationRes is NotificationEventCreationResult.AlreadyExists) {
+                                        notificationEventRepository.triggerNotificationWorker("RECITATION")
+                                    }
+                                } catch (e: Exception) {
+                                    android.util.Log.e("StudentDetailViewModel", "Failed to create recitation notification: ${e.javaClass.simpleName}")
+                                }
+                            }
+                        }
+                        val msg = if (syncRes?.syncStatus == BatchSyncStatus.QUEUED_OFFLINE) {
+                            "تم حفظ التسميع محلياً وسيتم المزامنة عند توفر الاتصال 📡"
+                        } else {
+                            "تمت إضافة التسميع بنجاح"
+                        }
+                        _events.emit(StudentDetailEvent.ShowMessage(msg))
+                        refreshCurrentTabData()
+                    } else {
+                        _events.emit(StudentDetailEvent.ShowMessage(result.exceptionOrNull()?.message ?: "حدث خطأ في حفظ التسميع"))
+                    }
                 } else {
-                    recitationRepository.updateRecitation(
+                    val result = recitationRepository.updateRecitation(
                         currentEdit.copy(
                             title = title,
                             content = content,
@@ -591,14 +673,13 @@ class StudentDetailViewModel(
                             note = note
                         )
                     )
-                }
-
-                if (result.isSuccess) {
-                    closeRecitationDialog()
-                    _events.emit(StudentDetailEvent.ShowMessage(if (currentEdit == null) "تمت إضافة التسميع بنجاح" else "تم تعديل التسميع بنجاح"))
-                    refreshCurrentTabData()
-                } else {
-                    _events.emit(StudentDetailEvent.ShowMessage(result.exceptionOrNull()?.message ?: "حدث خطأ في حفظ التسميع"))
+                    if (result.isSuccess) {
+                        closeRecitationDialog()
+                        _events.emit(StudentDetailEvent.ShowMessage("تم تعديل التسميع بنجاح"))
+                        refreshCurrentTabData()
+                    } else {
+                        _events.emit(StudentDetailEvent.ShowMessage(result.exceptionOrNull()?.message ?: "حدث خطأ في حفظ التسميع"))
+                    }
                 }
             } finally {
                 _uiState.update { it.copy(isSaving = false) }
@@ -678,8 +759,8 @@ class StudentDetailViewModel(
         _uiState.update { it.copy(isSaving = true) }
         viewModelScope.launch {
             try {
-                val result = if (currentEdit == null) {
-                    examRepository.addExam(
+                if (currentEdit == null) {
+                    val result = examRepository.addExam(
                         studentId = studentId,
                         date = date,
                         examName = examName,
@@ -688,8 +769,41 @@ class StudentDetailViewModel(
                         maxScore = maxScore,
                         note = note
                     )
+                    if (result.isSuccess) {
+                        closeExamDialog()
+                        val syncRes = result.getOrNull()
+                        if (syncRes?.syncStatus == BatchSyncStatus.SAVED_TO_CLOUD) {
+                            val exam = syncRes.data
+                            val examId = exam?.examId ?: ""
+                            val teacherId = _uiState.value.student?.teacherId ?: com.example.data.SupabaseClientProvider.mockTeacherId ?: com.example.data.SupabaseClientProvider.client.auth.currentUserOrNull()?.id ?: ""
+                            if (examId.isNotBlank() && teacherId.isNotBlank()) {
+                                try {
+                                    val event = NotificationEvent.Exam(
+                                        teacherId = teacherId,
+                                        studentId = studentId,
+                                        examId = examId
+                                    )
+                                    val creationRes = notificationEventRepository.createNotificationEvent(event)
+                                    if (creationRes is NotificationEventCreationResult.Created || creationRes is NotificationEventCreationResult.AlreadyExists) {
+                                        notificationEventRepository.triggerNotificationWorker("EXAM")
+                                    }
+                                } catch (e: Exception) {
+                                    android.util.Log.e("StudentDetailViewModel", "Failed to create exam notification: ${e.javaClass.simpleName}")
+                                }
+                            }
+                        }
+                        val msg = if (syncRes?.syncStatus == BatchSyncStatus.QUEUED_OFFLINE) {
+                            "تم حفظ الامتحان محلياً وسيتم المزامنة عند توفر الاتصال 📡"
+                        } else {
+                            "تمت إضافة الامتحان بنجاح"
+                        }
+                        _events.emit(StudentDetailEvent.ShowMessage(msg))
+                        refreshCurrentTabData()
+                    } else {
+                        _events.emit(StudentDetailEvent.ShowMessage(result.exceptionOrNull()?.message ?: "حدث خطأ في حفظ الامتحان"))
+                    }
                 } else {
-                    examRepository.updateExam(
+                    val result = examRepository.updateExam(
                         currentEdit.copy(
                             examName = examName,
                             subject = subject,
@@ -699,14 +813,13 @@ class StudentDetailViewModel(
                             note = note
                         )
                     )
-                }
-
-                if (result.isSuccess) {
-                    closeExamDialog()
-                    _events.emit(StudentDetailEvent.ShowMessage(if (currentEdit == null) "تمت إضافة الامتحان بنجاح" else "تم تعديل الامتحان بنجاح"))
-                    refreshCurrentTabData()
-                } else {
-                    _events.emit(StudentDetailEvent.ShowMessage(result.exceptionOrNull()?.message ?: "حدث خطأ في حفظ الامتحان"))
+                    if (result.isSuccess) {
+                        closeExamDialog()
+                        _events.emit(StudentDetailEvent.ShowMessage("تم تعديل الامتحان بنجاح"))
+                        refreshCurrentTabData()
+                    } else {
+                        _events.emit(StudentDetailEvent.ShowMessage(result.exceptionOrNull()?.message ?: "حدث خطأ في حفظ الامتحان"))
+                    }
                 }
             } finally {
                 _uiState.update { it.copy(isSaving = false) }
@@ -818,8 +931,8 @@ class StudentDetailViewModel(
         viewModelScope.launch {
             try {
                 closeHomeworkDialog()
-                val result = if (editingHomework != null) {
-                    homeworkRepository.updateHomework(
+                if (editingHomework != null) {
+                    val result = homeworkRepository.updateHomework(
                         editingHomework.copy(
                             date = date,
                             title = title,
@@ -827,22 +940,34 @@ class StudentDetailViewModel(
                             note = note
                         )
                     )
+                    if (result.isSuccess) {
+                        _events.emit(StudentDetailEvent.ShowMessage("تم حفظ الواجب بنجاح"))
+                        refreshCurrentTabData()
+                    } else {
+                        val errorMsg = result.exceptionOrNull()?.message ?: "فشل حفظ الواجب"
+                        _events.emit(StudentDetailEvent.ShowMessage(errorMsg))
+                    }
                 } else {
-                    homeworkRepository.addHomework(
+                    val result = homeworkRepository.addHomework(
                         studentId = studentId,
                         date = date,
                         title = title,
                         status = status,
                         note = note
                     )
-                }
-
-                if (result.isSuccess) {
-                    _events.emit(StudentDetailEvent.ShowMessage("تم حفظ الواجب بنجاح"))
-                    refreshCurrentTabData()
-                } else {
-                    val errorMsg = result.exceptionOrNull()?.message ?: "فشل حفظ الواجب"
-                    _events.emit(StudentDetailEvent.ShowMessage(errorMsg))
+                    if (result.isSuccess) {
+                        val syncRes = result.getOrNull()
+                        val msg = if (syncRes?.syncStatus == BatchSyncStatus.QUEUED_OFFLINE) {
+                            "تم حفظ الواجب محلياً وسيتم المزامنة عند توفر الاتصال 📡"
+                        } else {
+                            "تم حفظ الواجب بنجاح"
+                        }
+                        _events.emit(StudentDetailEvent.ShowMessage(msg))
+                        refreshCurrentTabData()
+                    } else {
+                        val errorMsg = result.exceptionOrNull()?.message ?: "فشل حفظ الواجب"
+                        _events.emit(StudentDetailEvent.ShowMessage(errorMsg))
+                    }
                 }
             } finally {
                 _uiState.update { it.copy(isSaving = false) }
@@ -897,6 +1022,12 @@ class StudentDetailViewModel(
             _uiState.update { it.copy(showDeleteBottomSheet = false, isLoading = true) }
             val result = studentRepository.deleteStudent(studentId)
             if (result.isSuccess) {
+                val syncRes = result.getOrNull()
+                if (syncRes?.syncStatus == BatchSyncStatus.QUEUED_OFFLINE) {
+                    _events.emit(StudentDetailEvent.ShowMessage("تم حذف الطالب محلياً وسيتم المزامنة عند توفر الاتصال 📡"))
+                } else {
+                    _events.emit(StudentDetailEvent.ShowMessage("تم حذف الطالب بنجاح"))
+                }
                 _events.emit(StudentDetailEvent.StudentDeleted)
             } else {
                 _uiState.update { it.copy(isLoading = false) }
@@ -924,3 +1055,12 @@ class StudentDetailViewModel(
         }
     }
 }
+
+data class StudentCombinedData(
+    val sortedAtt: List<Attendance>,
+    val attendanceSummary: AttendanceSummary,
+    val sortedRec: List<Recitation>,
+    val sortedEx: List<Exam>,
+    val sortedHw: List<Homework>
+)
+
